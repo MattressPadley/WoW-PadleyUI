@@ -1,0 +1,11 @@
+## Interface: 120001
+## Title: PadleyUI
+## Notes: A custom UI addon by Padley - skins built-in Blizzard frames
+## Author: Padley
+## Version: 1.0.0
+## OptionalDeps: Blizzard_DamageMeter
+
+Core\Constants.lua
+Core\SkinEngine.lua
+Skins\DamageMeter.lua
+PadleyUI.lua
