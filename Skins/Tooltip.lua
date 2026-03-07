@@ -51,8 +51,6 @@ local function SkinTooltip(tooltip)
         end
         local bg = C.BACKDROP_COLOR
         self:SetBackdropColor(bg[1], bg[2], bg[3], bg[4])
-        local border = C.BORDER_COLOR
-        self:SetBackdropBorderColor(border[1], border[2], border[3], border[4])
     end)
 end
 

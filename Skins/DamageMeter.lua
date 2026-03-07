@@ -114,14 +114,6 @@ local function SkinSessionWindow(window)
     local bgc = C.BACKDROP_COLOR
     bdFrame:SetBackdropColor(bgc[1], bgc[2], bgc[3], bgc[4])
 
-    -- Flat header overlay on the backdrop frame (not the window)
-    local hdr = bdFrame:CreateTexture(nil, "OVERLAY", nil, 1)
-    hdr:SetTexture(C.BAR_TEXTURE)
-    hdr:SetVertexColor(C.HEADER_COLOR[1], C.HEADER_COLOR[2], C.HEADER_COLOR[3], C.HEADER_COLOR[4])
-    hdr:SetPoint("TOPLEFT", window, "TOPLEFT", 1, -1)
-    hdr:SetPoint("TOPRIGHT", window, "TOPRIGHT", -1, 0)
-    hdr:SetHeight(28)
-
     -- NOTE: Do NOT call StyleFont on window.NotActive or window.SessionTimer.
     -- These FontStrings are read during secure Refresh execution.
 

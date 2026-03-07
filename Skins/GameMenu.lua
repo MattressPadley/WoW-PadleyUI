@@ -41,19 +41,16 @@ local function SkinMenuButton(button)
     bdFrame:SetFrameLevel(button:GetFrameLevel())
     bdFrame:SetBackdrop({
         bgFile   = C.FLAT_BACKDROP.bgFile,
-        edgeFile = C.FLAT_BACKDROP.edgeFile,
-        edgeSize = C.BORDER_SIZE,
     })
-    bdFrame:SetBackdropColor(0.15, 0.15, 0.15, 1)
-    bdFrame:SetBackdropBorderColor(C.BORDER_COLOR[1], C.BORDER_COLOR[2], C.BORDER_COLOR[3], C.BORDER_COLOR[4])
+    bdFrame:SetBackdropColor(C.HEADER_COLOR[1], C.HEADER_COLOR[2], C.HEADER_COLOR[3], C.HEADER_COLOR[4])
     bdFrame:EnableMouse(false)
 
-    -- Hover highlight
+    -- Hover highlight (bg color change)
     button:HookScript("OnEnter", function()
-        bdFrame:SetBackdropBorderColor(C.HIGHLIGHT_COLOR[1], C.HIGHLIGHT_COLOR[2], C.HIGHLIGHT_COLOR[3], C.HIGHLIGHT_COLOR[4])
+        bdFrame:SetBackdropColor(C.HIGHLIGHT_COLOR[1], C.HIGHLIGHT_COLOR[2], C.HIGHLIGHT_COLOR[3], C.HIGHLIGHT_COLOR[4])
     end)
     button:HookScript("OnLeave", function()
-        bdFrame:SetBackdropBorderColor(C.BORDER_COLOR[1], C.BORDER_COLOR[2], C.BORDER_COLOR[3], C.BORDER_COLOR[4])
+        bdFrame:SetBackdropColor(C.HEADER_COLOR[1], C.HEADER_COLOR[2], C.HEADER_COLOR[3], C.HEADER_COLOR[4])
     end)
 end
 

@@ -34,17 +34,12 @@ function SkinEngine:ApplyBackdrop(frame, opts)
 
     local backdrop = {
         bgFile = C.FLAT_BACKDROP.bgFile,
-        edgeFile = C.FLAT_BACKDROP.edgeFile,
-        edgeSize = opts.borderSize or C.BORDER_SIZE,
     }
 
     frame:SetBackdrop(backdrop)
 
     local bg = opts.bgColor or C.BACKDROP_COLOR
     frame:SetBackdropColor(bg[1], bg[2], bg[3], bg[4])
-
-    local border = opts.borderColor or C.BORDER_COLOR
-    frame:SetBackdropBorderColor(border[1], border[2], border[3], border[4])
 end
 
 --- Skin a StatusBar with a flat texture.
@@ -126,20 +121,16 @@ function SkinEngine:SkinDropdownButton(button, opts)
     bdFrame:SetFrameLevel(button:GetFrameLevel())
     bdFrame:SetBackdrop({
         bgFile   = C.FLAT_BACKDROP.bgFile,
-        edgeFile = C.FLAT_BACKDROP.edgeFile,
-        edgeSize = C.BORDER_SIZE,
     })
     local bg = opts.bgColor or C.HEADER_COLOR
     bdFrame:SetBackdropColor(bg[1], bg[2], bg[3], bg[4])
-    local border = opts.borderColor or C.BORDER_COLOR
-    bdFrame:SetBackdropBorderColor(border[1], border[2], border[3], border[4])
 
-    -- C) Hook OnEnter/OnLeave for hover border highlight
+    -- C) Hook OnEnter/OnLeave for hover bg highlight
     button:HookScript("OnEnter", function()
-        bdFrame:SetBackdropBorderColor(C.HIGHLIGHT_COLOR[1], C.HIGHLIGHT_COLOR[2], C.HIGHLIGHT_COLOR[3], C.HIGHLIGHT_COLOR[4])
+        bdFrame:SetBackdropColor(C.HIGHLIGHT_COLOR[1], C.HIGHLIGHT_COLOR[2], C.HIGHLIGHT_COLOR[3], C.HIGHLIGHT_COLOR[4])
     end)
     button:HookScript("OnLeave", function()
-        bdFrame:SetBackdropBorderColor(C.BORDER_COLOR[1], C.BORDER_COLOR[2], C.BORDER_COLOR[3], C.BORDER_COLOR[4])
+        bdFrame:SetBackdropColor(bg[1], bg[2], bg[3], bg[4])
     end)
 
     -- D) Style any text on the button
