@@ -11,6 +11,28 @@ local skinnedWindows = {}
 local buttonDecorations = {}
 
 ---------------------------------------------------------------------------
+-- Entry Bars
+---------------------------------------------------------------------------
+
+local function SkinEntry(entry)
+    local statusBar = entry.StatusBar
+    if not statusBar then return end
+
+    -- Always re-apply flat texture (SetStyle resets it during Init)
+    statusBar:SetStatusBarTexture(C.BAR_TEXTURE)
+
+    -- Hide the shadow background and edge regions
+    local bgRegions = statusBar.BackgroundRegions
+    if bgRegions then
+        for _, region in ipairs(bgRegions) do
+            region:SetAtlas("")
+            region:SetTexture(nil)
+            region:Hide()
+        end
+    end
+end
+
+---------------------------------------------------------------------------
 -- Source / Detail Window
 ---------------------------------------------------------------------------
 
@@ -39,26 +61,25 @@ local function SkinSourceWindow(sourceWindow)
     bdFrame:SetBackdropColor(bgc[1], bgc[2], bgc[3], bgc[4])
     local bdc = C.BORDER_COLOR
     bdFrame:SetBackdropBorderColor(bdc[1], bdc[2], bdc[3], bdc[4])
-end
 
----------------------------------------------------------------------------
--- Entry Bars
----------------------------------------------------------------------------
+    -- Skin spell entry bars in the source window ScrollBox
+    local scrollBox = sourceWindow.ScrollBox
+    if scrollBox then
+        if scrollBox.Update then
+            hooksecurefunc(scrollBox, "Update", function(self)
+                if self.ForEachFrame then
+                    self:ForEachFrame(function(entry)
+                        SkinEntry(entry)
+                    end)
+                end
+            end)
+        end
 
-local function SkinEntry(entry)
-    local statusBar = entry.StatusBar
-    if not statusBar then return end
-
-    -- Always re-apply flat texture (SetStyle resets it during Init)
-    statusBar:SetStatusBarTexture(C.BAR_TEXTURE)
-
-    -- Hide the shadow background and edge regions
-    local bgRegions = statusBar.BackgroundRegions
-    if bgRegions then
-        for _, region in ipairs(bgRegions) do
-            region:SetAtlas("")
-            region:SetTexture(nil)
-            region:Hide()
+        -- Skin any entries already visible
+        if scrollBox.ForEachFrame then
+            scrollBox:ForEachFrame(function(entry)
+                SkinEntry(entry)
+            end)
         end
     end
 end
