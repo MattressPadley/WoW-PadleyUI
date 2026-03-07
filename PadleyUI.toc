@@ -13,4 +13,5 @@ Skins\Loot.lua
 Skins\GameMenu.lua
 Skins\Chat.lua
 Skins\StatusBar.lua
+Skins\Minimap.lua
 PadleyUI.lua

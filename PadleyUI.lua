@@ -11,6 +11,7 @@ frame:SetScript("OnEvent", function(self, event, loadedAddon)
         ns.GameMenuSkin:Apply()
         ns.ChatSkin:Apply()
         ns.StatusBarSkin:Apply()
+        ns.MinimapSkin:Apply()
 
         -- Blizzard_DamageMeter is in OptionalDeps so it loads BEFORE us.
         -- By the time this fires, we already missed its ADDON_LOADED event.
