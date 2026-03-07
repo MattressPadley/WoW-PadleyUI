@@ -7,55 +7,107 @@ local LootSkin = {}
 ns.LootSkin = LootSkin
 
 -- External tracking tables (avoids writing keys to Blizzard frames)
-local skinnedElements = {}
+local skinnedElements = {}   -- element -> bdFrame
 local mainFrameSkinned = false
+
+---------------------------------------------------------------------------
+-- Quality border color
+---------------------------------------------------------------------------
+
+local function UpdateElementBorder(element, bdFrame)
+    local quality
+    if element.GetElementData then
+        local ok, data = pcall(element.GetElementData, element)
+        if ok and data then
+            quality = data.quality or data.itemQuality
+        end
+    end
+    if quality and quality > 1 and ITEM_QUALITY_COLORS and ITEM_QUALITY_COLORS[quality] then
+        local c = ITEM_QUALITY_COLORS[quality]
+        bdFrame:SetBackdropBorderColor(c.r, c.g, c.b, 1)
+    else
+        bdFrame:SetBackdropBorderColor(C.BORDER_COLOR[1], C.BORDER_COLOR[2], C.BORDER_COLOR[3], C.BORDER_COLOR[4])
+    end
+end
 
 ---------------------------------------------------------------------------
 -- Loot element skinning
 ---------------------------------------------------------------------------
 
 local function SkinLootElement(element)
-    if not element or skinnedElements[element] then return end
-    skinnedElements[element] = true
+    if not element then return end
 
-    -- Hide BACKGROUND and BORDER layer textures (itemcard bg/border atlases)
-    -- Keep OVERLAY textures (quest icon, highlight, pushed)
-    for i = 1, element:GetNumRegions() do
-        local region = select(i, element:GetRegions())
-        if region and region:GetObjectType() == "Texture" then
-            local layer = region:GetDrawLayer()
-            if layer == "BACKGROUND" or layer == "BORDER" then
-                region:SetAlpha(0)
+    local bdFrame = skinnedElements[element]
+
+    if not bdFrame then
+        -- Hide all non-quest texture regions (bg, border, highlight, raritytag)
+        for i = 1, element:GetNumRegions() do
+            local region = select(i, element:GetRegions())
+            if region and region:GetObjectType() == "Texture" then
+                local layer = region:GetDrawLayer()
+                if layer == "BACKGROUND" or layer == "BORDER" or layer == "HIGHLIGHT" then
+                    region:SetAlpha(0)
+                end
+                local atlas = region:GetAtlas()
+                if atlas and atlas:find("raritytag") then
+                    region:SetAlpha(0)
+                end
             end
-            -- Also hide QualityStripe (OVERLAY layer, raritytag atlas)
-            local atlas = region:GetAtlas()
-            if atlas and atlas:find("raritytag") then
-                region:SetAlpha(0)
+        end
+
+        -- Kill highlight/pushed textures on child buttons (SetTexture clears the
+        -- rounded default art so the button's built-in hover can't show it)
+        for i = 1, select("#", element:GetChildren()) do
+            local child = select(i, element:GetChildren())
+            local ctype = child:GetObjectType()
+            if ctype == "Button" or ctype == "ItemButton" then
+                if child:GetHighlightTexture() then child:GetHighlightTexture():SetTexture("") end
+                if child:GetPushedTexture() then child:GetPushedTexture():SetTexture("") end
+                child:SetHighlightTexture("")
+            end
+        end
+
+        -- Create flat backdrop
+        bdFrame = CreateFrame("Frame", nil, element, "BackdropTemplate")
+        bdFrame:SetAllPoints()
+        bdFrame:SetFrameLevel(element:GetFrameLevel())
+        bdFrame:SetBackdrop({
+            bgFile   = C.FLAT_BACKDROP.bgFile,
+            edgeFile = C.FLAT_BACKDROP.edgeFile,
+            edgeSize = C.BORDER_SIZE,
+        })
+        bdFrame:SetBackdropColor(C.HEADER_COLOR[1], C.HEADER_COLOR[2], C.HEADER_COLOR[3], C.HEADER_COLOR[4])
+        bdFrame:SetBackdropBorderColor(C.BORDER_COLOR[1], C.BORDER_COLOR[2], C.BORDER_COLOR[3], C.BORDER_COLOR[4])
+        bdFrame:EnableMouse(false)
+
+        skinnedElements[element] = bdFrame
+
+        -- Hover highlight via child ItemButton (not the element frame)
+        for i = 1, select("#", element:GetChildren()) do
+            local child = select(i, element:GetChildren())
+            local ctype = child:GetObjectType()
+            if ctype == "Button" or ctype == "ItemButton" then
+                child:HookScript("OnEnter", function()
+                    bdFrame:SetBackdropBorderColor(C.HIGHLIGHT_COLOR[1], C.HIGHLIGHT_COLOR[2], C.HIGHLIGHT_COLOR[3], C.HIGHLIGHT_COLOR[4])
+                end)
+                child:HookScript("OnLeave", function()
+                    UpdateElementBorder(element, bdFrame)
+                end)
+                break
+            end
+        end
+
+        -- Style font strings
+        for i = 1, element:GetNumRegions() do
+            local region = select(i, element:GetRegions())
+            if region and region:GetObjectType() == "FontString" then
+                SE:StyleFont(region)
             end
         end
     end
 
-    -- Create a flat backdrop child frame for the element
-    local bdFrame = CreateFrame("Frame", nil, element, "BackdropTemplate")
-    bdFrame:SetAllPoints()
-    bdFrame:SetFrameLevel(element:GetFrameLevel())
-    bdFrame:SetBackdrop({
-        bgFile   = C.FLAT_BACKDROP.bgFile,
-        edgeFile = C.FLAT_BACKDROP.edgeFile,
-        edgeSize = C.BORDER_SIZE,
-    })
-    local bg = C.HEADER_COLOR
-    bdFrame:SetBackdropColor(bg[1], bg[2], bg[3], bg[4])
-    local border = C.BORDER_COLOR
-    bdFrame:SetBackdropBorderColor(border[1], border[2], border[3], border[4])
-
-    -- Style font strings (item name, quality text)
-    for i = 1, element:GetNumRegions() do
-        local region = select(i, element:GetRegions())
-        if region and region:GetObjectType() == "FontString" then
-            SE:StyleFont(region)
-        end
-    end
+    -- Always update quality border (elements get recycled by ScrollBox)
+    UpdateElementBorder(element, bdFrame)
 end
 
 ---------------------------------------------------------------------------
