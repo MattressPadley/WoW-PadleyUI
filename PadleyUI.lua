@@ -6,9 +6,10 @@ frame:SetScript("OnEvent", function(self, event, loadedAddon)
     if loadedAddon == addonName then
         print("|cff00ccffPadleyUI|r loaded!")
 
-        -- Tooltips and Game Menu are always available (core UI, no optional dep)
+        -- Always-available skins (core UI, no optional dep)
         ns.TooltipSkin:Apply()
         ns.GameMenuSkin:Apply()
+        ns.ChatSkin:Apply()
 
         -- Blizzard_DamageMeter is in OptionalDeps so it loads BEFORE us.
         -- By the time this fires, we already missed its ADDON_LOADED event.

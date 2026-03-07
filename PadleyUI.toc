@@ -11,4 +11,5 @@ Skins\DamageMeter.lua
 Skins\Tooltip.lua
 Skins\Loot.lua
 Skins\GameMenu.lua
+Skins\Chat.lua
 PadleyUI.lua
