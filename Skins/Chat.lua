@@ -158,7 +158,6 @@ local function SkinChatFrame(chatFrame)
         bgFile   = C.FLAT_BACKDROP.bgFile,
     })
     panel:SetBackdropColor(C.BACKDROP_COLOR[1], C.BACKDROP_COLOR[2], C.BACKDROP_COLOR[3], C.BACKDROP_COLOR[4])
-    panel:SetBackdropBorderColor(C.BORDER_COLOR[1], C.BORDER_COLOR[2], C.BORDER_COLOR[3], C.BORDER_COLOR[4])
 
     -- Skin sub-elements
     SkinChatTab(_G[name .. "Tab"])
