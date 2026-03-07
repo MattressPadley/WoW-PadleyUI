@@ -6,29 +6,34 @@ local SE = ns.SkinEngine
 local GameMenuSkin = {}
 ns.GameMenuSkin = GameMenuSkin
 
--- External tracking table
+-- External tracking table (stores bdFrame per button)
 local skinnedButtons = {}
 
 ---------------------------------------------------------------------------
 -- Button skinning
 ---------------------------------------------------------------------------
 
-local function SkinMenuButton(button)
-    if not button or skinnedButtons[button] then return end
-    skinnedButtons[button] = true
-
-    -- Alpha-zero all texture regions
+local function ZeroButtonTextures(button)
     for i = 1, button:GetNumRegions() do
         local region = select(i, button:GetRegions())
         if region and region:GetObjectType() == "Texture" then
             region:SetAlpha(0)
         end
     end
-
-    -- Also clear the special Button texture slots
     if button:GetNormalTexture() then button:GetNormalTexture():SetAlpha(0) end
     if button:GetHighlightTexture() then button:GetHighlightTexture():SetAlpha(0) end
     if button:GetPushedTexture() then button:GetPushedTexture():SetAlpha(0) end
+end
+
+local function SkinMenuButton(button)
+    if not button then return end
+
+    -- Always re-zero textures (Blizzard can reset them between shows)
+    ZeroButtonTextures(button)
+
+    -- Only create backdrop + hooks once
+    if skinnedButtons[button] then return end
+    skinnedButtons[button] = true
 
     -- Child backdrop at same frame level (renders behind button's own regions)
     local bdFrame = CreateFrame("Frame", nil, button, "BackdropTemplate")

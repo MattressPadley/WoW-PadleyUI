@@ -68,11 +68,8 @@ local function SkinEditBox(editBox)
     bdFrame:EnableMouse(false)
     bdFrame:SetBackdrop({
         bgFile   = C.FLAT_BACKDROP.bgFile,
-        edgeFile = C.FLAT_BACKDROP.edgeFile,
-        edgeSize = C.BORDER_SIZE,
     })
     bdFrame:SetBackdropColor(C.BACKDROP_COLOR[1], C.BACKDROP_COLOR[2], C.BACKDROP_COLOR[3], C.BACKDROP_COLOR[4])
-    bdFrame:SetBackdropBorderColor(C.BORDER_COLOR[1], C.BORDER_COLOR[2], C.BORDER_COLOR[3], C.BORDER_COLOR[4])
 
     -- Style the header font (channel prefix e.g. "[Guild]")
     local header = editBox.header or _G[editBox:GetName() .. "Header"]
@@ -159,8 +156,6 @@ local function SkinChatFrame(chatFrame)
     panel:EnableMouse(false)
     panel:SetBackdrop({
         bgFile   = C.FLAT_BACKDROP.bgFile,
-        edgeFile = C.FLAT_BACKDROP.edgeFile,
-        edgeSize = C.BORDER_SIZE,
     })
     panel:SetBackdropColor(C.BACKDROP_COLOR[1], C.BACKDROP_COLOR[2], C.BACKDROP_COLOR[3], C.BACKDROP_COLOR[4])
     panel:SetBackdropBorderColor(C.BORDER_COLOR[1], C.BORDER_COLOR[2], C.BORDER_COLOR[3], C.BORDER_COLOR[4])

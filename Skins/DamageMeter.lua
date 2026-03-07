@@ -54,13 +54,9 @@ local function SkinSourceWindow(sourceWindow)
     bdFrame:SetFrameLevel(sourceWindow:GetFrameLevel())
     bdFrame:SetBackdrop({
         bgFile   = C.FLAT_BACKDROP.bgFile,
-        edgeFile = C.FLAT_BACKDROP.edgeFile,
-        edgeSize = C.BORDER_SIZE,
     })
     local bgc = C.BACKDROP_COLOR
     bdFrame:SetBackdropColor(bgc[1], bgc[2], bgc[3], bgc[4])
-    local bdc = C.BORDER_COLOR
-    bdFrame:SetBackdropBorderColor(bdc[1], bdc[2], bdc[3], bdc[4])
 
     -- Skin spell entry bars in the source window ScrollBox
     local scrollBox = sourceWindow.ScrollBox
@@ -114,13 +110,9 @@ local function SkinSessionWindow(window)
     bdFrame:SetFrameLevel(window:GetFrameLevel())
     bdFrame:SetBackdrop({
         bgFile   = C.FLAT_BACKDROP.bgFile,
-        edgeFile = C.FLAT_BACKDROP.edgeFile,
-        edgeSize = C.BORDER_SIZE,
     })
     local bgc = C.BACKDROP_COLOR
     bdFrame:SetBackdropColor(bgc[1], bgc[2], bgc[3], bgc[4])
-    local bdc = C.BORDER_COLOR
-    bdFrame:SetBackdropBorderColor(bdc[1], bdc[2], bdc[3], bdc[4])
 
     -- Flat header overlay on the backdrop frame (not the window)
     local hdr = bdFrame:CreateTexture(nil, "OVERLAY", nil, 1)
