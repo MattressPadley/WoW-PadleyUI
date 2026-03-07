@@ -17,6 +17,8 @@ The DamageMeter (and other secure Blizzard frames) use `securecallfunction` / `s
 ### DON'T (Causes Taint)
 
 - **Never `hooksecurefunc(MixinTable, "Method", hook)`.** `Mixin()` copies the hooked function as a plain Lua value. The copy loses its C-level hooksecurefunc metadata, so `securecallfunction` runs the entire function insecurely — making combat values "secret."
-- **Never `Mixin(blizzardFrame, BackdropTemplateMixin)`.** This writes many keys onto the Blizzard frame's table, broadening the taint surface.
-- **Never `SetFont` on FontStrings read during secure execution** (e.g. `statusBar.Name`, `statusBar.Value`, `window.NotActive`, `window.SessionTimer`). The tainted FontString causes secret-value errors when `GetText()` is called in secure code.
+- **Never `Mixin(blizzardFrame, BackdropTemplateMixin)`.** This writes tainted keys onto the Blizzard frame's table. Secure code encountering these keys gets tainted. Use `CreateFrame("Frame", nil, button, "BackdropTemplate")` instead.
+- **Never `SetHeight`/`SetWidth`/`SetSize` on Blizzard dropdown buttons inside hooks.** Triggers layout cascades that cause `Refresh` to re-enter in the addon's tainted context.
+- **Never modify `window.NotActive` or `window.SessionTimer`** — not `SetFont`, not `ClearAllPoints`/`SetPoint`. Their layout state is evaluated during secure `Refresh`; tainting any property poisons the entire execution context.
+- **Never `SetFont` on other FontStrings read during secure execution** (e.g. `statusBar.Name`, `statusBar.Value`). The tainted FontString causes secret-value errors when `GetText()` is called in secure code.
 - **Never write custom keys to frames in secure execution paths** (e.g. `blizzardFrame._myFlag = true`). Use external tracking tables instead.

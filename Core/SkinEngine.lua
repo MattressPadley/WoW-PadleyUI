@@ -93,14 +93,18 @@ function SkinEngine:StyleFont(fontString, size, flags)
     fontString:SetFont(C.FONT, size or C.FONT_SIZE, flags or C.FONT_FLAGS)
 end
 
+-- Track skinned buttons externally (avoids writing keys to Blizzard frames)
+local skinnedButtons = {}
+
 --- Skin a dropdown/button that uses ButtonStateBehaviorMixin.
 --- Uses alpha-zero pattern: hides Blizzard textures via SetAlpha(0) so they
 --- stay invisible even when OnButtonStateChanged() re-applies atlases.
+--- Uses a separate child frame for backdrop to avoid Mixin on Blizzard frames.
 --- @param button table The button frame
 --- @param opts table|nil Optional { bgColor, borderColor }
 function SkinEngine:SkinDropdownButton(button, opts)
-    if not button or button._padleySkinned then return end
-    button._padleySkinned = true
+    if not button or skinnedButtons[button] then return end
+    skinnedButtons[button] = true
     opts = opts or {}
 
     -- A) Alpha-zero all known Blizzard child textures.
@@ -116,22 +120,26 @@ function SkinEngine:SkinDropdownButton(button, opts)
     if button.SetPushedTexture then button:SetPushedTexture("") end
     if button.SetDisabledTexture then button:SetDisabledTexture("") end
 
-    -- B) Apply flat backdrop as our replacement visual
-    self:ApplyBackdrop(button, {
-        bgColor = opts.bgColor or C.HEADER_COLOR,
-        borderColor = opts.borderColor or C.BORDER_COLOR,
+    -- B) Separate child frame for backdrop (avoids Mixin(blizzardFrame, BackdropTemplateMixin))
+    local bdFrame = CreateFrame("Frame", nil, button, "BackdropTemplate")
+    bdFrame:SetAllPoints()
+    bdFrame:SetFrameLevel(button:GetFrameLevel())
+    bdFrame:SetBackdrop({
+        bgFile   = C.FLAT_BACKDROP.bgFile,
+        edgeFile = C.FLAT_BACKDROP.edgeFile,
+        edgeSize = C.BORDER_SIZE,
     })
+    local bg = opts.bgColor or C.HEADER_COLOR
+    bdFrame:SetBackdropColor(bg[1], bg[2], bg[3], bg[4])
+    local border = opts.borderColor or C.BORDER_COLOR
+    bdFrame:SetBackdropBorderColor(border[1], border[2], border[3], border[4])
 
     -- C) Hook OnEnter/OnLeave for hover border highlight
-    button:HookScript("OnEnter", function(btn)
-        if btn.SetBackdropBorderColor then
-            btn:SetBackdropBorderColor(C.HIGHLIGHT_COLOR[1], C.HIGHLIGHT_COLOR[2], C.HIGHLIGHT_COLOR[3], C.HIGHLIGHT_COLOR[4])
-        end
+    button:HookScript("OnEnter", function()
+        bdFrame:SetBackdropBorderColor(C.HIGHLIGHT_COLOR[1], C.HIGHLIGHT_COLOR[2], C.HIGHLIGHT_COLOR[3], C.HIGHLIGHT_COLOR[4])
     end)
-    button:HookScript("OnLeave", function(btn)
-        if btn.SetBackdropBorderColor then
-            btn:SetBackdropBorderColor(C.BORDER_COLOR[1], C.BORDER_COLOR[2], C.BORDER_COLOR[3], C.BORDER_COLOR[4])
-        end
+    button:HookScript("OnLeave", function()
+        bdFrame:SetBackdropBorderColor(C.BORDER_COLOR[1], C.BORDER_COLOR[2], C.BORDER_COLOR[3], C.BORDER_COLOR[4])
     end)
 
     -- D) Style any text on the button

@@ -6,8 +6,9 @@ local SE = ns.SkinEngine
 local DamageMeterSkin = {}
 ns.DamageMeterSkin = DamageMeterSkin
 
--- Track skinned frames (external table avoids writing keys to Blizzard frames)
+-- Track skinned frames externally (avoids writing keys to Blizzard frames)
 local skinnedWindows = {}
+local buttonDecorations = {}
 
 ---------------------------------------------------------------------------
 -- Source / Detail Window
@@ -106,21 +107,22 @@ local function SkinSessionWindow(window)
     hdr:SetVertexColor(C.HEADER_COLOR[1], C.HEADER_COLOR[2], C.HEADER_COLOR[3], C.HEADER_COLOR[4])
     hdr:SetPoint("TOPLEFT", window, "TOPLEFT", 1, -1)
     hdr:SetPoint("TOPRIGHT", window, "TOPRIGHT", -1, 0)
-    hdr:SetHeight(21)
+    hdr:SetHeight(28)
 
     -- NOTE: Do NOT call StyleFont on window.NotActive or window.SessionTimer.
     -- These FontStrings are read during secure Refresh execution.
 
-    -- Skin the dropdown buttons (alpha-zero pattern)
+    -- Skin the dropdown buttons (no SetHeight — triggers layout cascades that
+    -- cause Refresh to re-enter in our tainted context, producing secret values)
     local settingsDD = window.SettingsDropdown
     if settingsDD then
         SE:SkinDropdownButton(settingsDD)
-        if not settingsDD._padleyIcon then
+        if not buttonDecorations[settingsDD] then
             local icon = settingsDD:CreateTexture(nil, "ARTWORK")
             icon:SetAtlas("GM-icon-settings")
-            icon:SetSize(18, 18)
+            icon:SetSize(14, 14)
             icon:SetPoint("CENTER")
-            settingsDD._padleyIcon = icon
+            buttonDecorations[settingsDD] = icon
         end
     end
 
@@ -138,15 +140,20 @@ local function SkinSessionWindow(window)
         if typeDD.TypeName then
             SE:StyleFont(typeDD.TypeName)
         end
-        if not typeDD._padleyArrow then
+        if not buttonDecorations[typeDD] then
             local arrow = typeDD:CreateTexture(nil, "ARTWORK")
             arrow:SetTexture("Interface\\Buttons\\Arrow-Down-Down")
-            arrow:SetSize(12, 12)
+            arrow:SetSize(10, 10)
             arrow:SetPoint("CENTER")
             arrow:SetVertexColor(0.8, 0.8, 0.8, 1)
-            typeDD._padleyArrow = arrow
+            buttonDecorations[typeDD] = arrow
         end
     end
+
+    -- NOTE: Do NOT reposition window.NotActive or window.SessionTimer.
+    -- Their layout state is read during secure Refresh execution; tainting
+    -- position properties causes the entire Refresh context to become tainted,
+    -- making combat API data return as secret values.
 
     -- Style the resize button
     local resize = window.ResizeButton
@@ -157,13 +164,9 @@ local function SkinSessionWindow(window)
         end
     end
 
-    -- Tighten ScrollBox to use full width inside flat border
+    -- Register hooks immediately (safe — no layout changes)
     local scrollBox = window.ScrollBox
     if scrollBox then
-        scrollBox:ClearAllPoints()
-        scrollBox:SetPoint("TOPLEFT", window, "TOPLEFT", 1, -23)
-        scrollBox:SetPoint("BOTTOMRIGHT", window, "BOTTOMRIGHT", -1, 1)
-
         -- Hook ScrollBox Update on the INSTANCE to skin entries after
         -- secure Init/SetStyle calls are complete.
         if scrollBox.Update then
@@ -187,9 +190,6 @@ local function SkinSessionWindow(window)
     -- Local player entry (fixed bar, not in ScrollBox)
     local localEntry = window.LocalPlayerEntry
     if localEntry then
-        localEntry:ClearAllPoints()
-        localEntry:SetPoint("BOTTOMLEFT", window, "BOTTOMLEFT", 1, 1)
-        localEntry:SetPoint("BOTTOMRIGHT", window, "BOTTOMRIGHT", -1, 1)
         SkinEntry(localEntry)
 
         -- Hook Init on the INSTANCE to re-skin after data updates
@@ -207,11 +207,28 @@ local function SkinSessionWindow(window)
             local sb = self.ScrollBox
             if sb then
                 sb:ClearAllPoints()
-                sb:SetPoint("TOPLEFT", self, "TOPLEFT", 1, -23)
+                sb:SetPoint("TOPLEFT", self, "TOPLEFT", 1, -30)
                 sb:SetPoint("BOTTOMRIGHT", self, "BOTTOMRIGHT", -1, 1)
             end
         end)
     end
+
+    -- Defer layout-changing repositioning to next frame.
+    -- ClearAllPoints/SetPoint on the ScrollBox triggers a layout cascade
+    -- (SetDataProvider → Refresh) that runs synchronously inside our
+    -- tainted SetupSessionWindow post-hook, causing secret value errors.
+    C_Timer.After(0, function()
+        if scrollBox then
+            scrollBox:ClearAllPoints()
+            scrollBox:SetPoint("TOPLEFT", window, "TOPLEFT", 1, -30)
+            scrollBox:SetPoint("BOTTOMRIGHT", window, "BOTTOMRIGHT", -1, 1)
+        end
+        if localEntry then
+            localEntry:ClearAllPoints()
+            localEntry:SetPoint("BOTTOMLEFT", window, "BOTTOMLEFT", 1, 1)
+            localEntry:SetPoint("BOTTOMRIGHT", window, "BOTTOMRIGHT", -1, 1)
+        end
+    end)
 
     -- Skin the source window
     local sourceWindow = window.SourceWindow
