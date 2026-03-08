@@ -1009,12 +1009,15 @@ function UnitFrameSkin:Apply()
     end)
 
     local eventFrame = CreateFrame("Frame")
+    eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
     eventFrame:RegisterEvent("PLAYER_TARGET_CHANGED")
     eventFrame:RegisterEvent("PLAYER_FOCUS_CHANGED")
     eventFrame:RegisterEvent("UNIT_DISPLAYPOWER")
     eventFrame:RegisterUnitEvent("UNIT_AURA", "target", "focus")
     eventFrame:SetScript("OnEvent", function(self, event, arg1)
-        if event == "PLAYER_TARGET_CHANGED" then
+        if event == "PLAYER_ENTERING_WORLD" then
+            RefreshNameColor(PlayerFrame and PlayerFrame.name, "player")
+        elseif event == "PLAYER_TARGET_CHANGED" then
             RefreshTargetColors()
             C_Timer.After(0, SkinTargetAuras)
         elseif event == "PLAYER_FOCUS_CHANGED" then
