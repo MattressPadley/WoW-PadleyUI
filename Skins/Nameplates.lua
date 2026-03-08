@@ -405,6 +405,9 @@ local function RefreshNamePlate(unitFrame)
 end
 
 function NameplateSkin:Apply()
+    -- Make nameplates less wide (default horizontalScale is 1.0)
+    SetCVar("NamePlateHorizontalScale", 0.7)
+
     local eventFrame = CreateFrame("Frame")
     eventFrame:RegisterEvent("NAME_PLATE_CREATED")
     eventFrame:RegisterEvent("NAME_PLATE_UNIT_ADDED")
