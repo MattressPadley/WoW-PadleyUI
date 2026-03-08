@@ -15,4 +15,7 @@ Skins\Chat.lua
 Skins\StatusBar.lua
 Skins\Minimap.lua
 Skins\ActionBars.lua
+Skins\CooldownTracker.lua
+Skins\Nameplates.lua
+Skins\Items.lua
 PadleyUI.lua

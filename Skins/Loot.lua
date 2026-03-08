@@ -8,6 +8,7 @@ ns.LootSkin = LootSkin
 
 -- External tracking tables (avoids writing keys to Blizzard frames)
 local skinnedElements = {}   -- element -> bdFrame
+local skinnedIcons = {}      -- itemButton -> iconBdFrame
 local mainFrameSkinned = false
 
 ---------------------------------------------------------------------------
@@ -31,6 +32,117 @@ local function UpdateElementBorder(element, bdFrame)
 end
 
 ---------------------------------------------------------------------------
+-- Loot icon skinning
+---------------------------------------------------------------------------
+
+local function RemoveAllMasks(texture, frame)
+    -- Remove masks from direct regions
+    for i = 1, frame:GetNumRegions() do
+        local region = select(i, frame:GetRegions())
+        if region and region:GetObjectType() == "MaskTexture" then
+            texture:RemoveMaskTexture(region)
+            region:Hide()
+        end
+    end
+    -- Remove masks from child frames
+    for i = 1, select("#", frame:GetChildren()) do
+        local child = select(i, frame:GetChildren())
+        if child then
+            for j = 1, child:GetNumRegions() do
+                local region = select(j, child:GetRegions())
+                if region and region:GetObjectType() == "MaskTexture" then
+                    texture:RemoveMaskTexture(region)
+                    region:Hide()
+                end
+            end
+        end
+    end
+end
+
+local function SkinLootIcon(button)
+    if not button or skinnedIcons[button] then return end
+
+    local icon = button.icon or button.Icon
+    if not icon then return end
+
+    -- Strip normal/pushed textures
+    local normalTex = button.GetNormalTexture and button:GetNormalTexture()
+    if normalTex then normalTex:SetAlpha(0) end
+    local pushedTex = button.GetPushedTexture and button:GetPushedTexture()
+    if pushedTex then pushedTex:SetAlpha(0) end
+
+    -- Hide Blizzard icon border
+    if button.IconBorder then button.IconBorder:Hide() end
+
+    -- Remove ALL masks from icon (regions, children, named)
+    RemoveAllMasks(icon, button)
+    if button.IconMask then
+        icon:RemoveMaskTexture(button.IconMask)
+        button.IconMask:Hide()
+    end
+    if button.CircleMask then
+        icon:RemoveMaskTexture(button.CircleMask)
+        button.CircleMask:Hide()
+    end
+    icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+
+    -- Also remove masks from IconBorder so it can't clip rounded
+    if button.IconBorder then
+        RemoveAllMasks(button.IconBorder, button)
+        if button.IconMask then button.IconBorder:RemoveMaskTexture(button.IconMask) end
+        if button.CircleMask then button.IconBorder:RemoveMaskTexture(button.CircleMask) end
+    end
+
+    -- Remove masks from highlight and replace with flat texture
+    local highlightTex = button.GetHighlightTexture and button:GetHighlightTexture()
+    if highlightTex then
+        RemoveAllMasks(highlightTex, button)
+        if button.IconMask then highlightTex:RemoveMaskTexture(button.IconMask) end
+        if button.CircleMask then highlightTex:RemoveMaskTexture(button.CircleMask) end
+        highlightTex:SetTexture(C.BAR_TEXTURE)
+        highlightTex:SetVertexColor(1, 1, 1, 0.25)
+        highlightTex:SetAllPoints(icon)
+    end
+
+    -- Child backdrop behind the icon
+    local bdFrame = CreateFrame("Frame", nil, button, "BackdropTemplate")
+    bdFrame:SetAllPoints()
+    bdFrame:SetFrameLevel(math.max(button:GetFrameLevel() - 1, 0))
+    bdFrame:SetBackdrop({
+        bgFile   = C.FLAT_BACKDROP.bgFile,
+        edgeFile = C.FLAT_BACKDROP.edgeFile,
+        edgeSize = C.BORDER_SIZE,
+    })
+    bdFrame:SetBackdropColor(C.BACKDROP_COLOR[1], C.BACKDROP_COLOR[2], C.BACKDROP_COLOR[3], C.BACKDROP_COLOR[4])
+    bdFrame:SetBackdropBorderColor(C.BORDER_COLOR[1], C.BORDER_COLOR[2], C.BORDER_COLOR[3], C.BORDER_COLOR[4])
+    bdFrame:EnableMouse(false)
+
+    -- Hook IconBorder:Show to reactively apply quality color
+    if button.IconBorder then
+        hooksecurefunc(button.IconBorder, "Show", function(iconBorder)
+            local r, g, b = iconBorder:GetVertexColor()
+            iconBorder:Hide()
+            if ITEM_QUALITY_COLORS then
+                for q = 7, 0, -1 do
+                    local qc = ITEM_QUALITY_COLORS[q]
+                    if qc and math.abs(qc.r - r) < 0.05 and math.abs(qc.g - g) < 0.05 and math.abs(qc.b - b) < 0.05 then
+                        if q >= 2 then
+                            bdFrame:SetBackdropBorderColor(qc.r, qc.g, qc.b, 1)
+                        else
+                            bdFrame:SetBackdropBorderColor(C.BORDER_COLOR[1], C.BORDER_COLOR[2], C.BORDER_COLOR[3], C.BORDER_COLOR[4])
+                        end
+                        return
+                    end
+                end
+            end
+            bdFrame:SetBackdropBorderColor(C.BORDER_COLOR[1], C.BORDER_COLOR[2], C.BORDER_COLOR[3], C.BORDER_COLOR[4])
+        end)
+    end
+
+    skinnedIcons[button] = bdFrame
+end
+
+---------------------------------------------------------------------------
 -- Loot element skinning
 ---------------------------------------------------------------------------
 
@@ -40,30 +152,39 @@ local function SkinLootElement(element)
     local bdFrame = skinnedElements[element]
 
     if not bdFrame then
-        -- Hide all non-quest texture regions (bg, border, highlight, raritytag)
+        -- Hide HighlightNameFrame and PushedNameFrame (rounded hover/push overlays)
+        if element.HighlightNameFrame then
+            element.HighlightNameFrame:Hide()
+            hooksecurefunc(element.HighlightNameFrame, "Show", function(self) self:Hide() end)
+        end
+        if element.PushedNameFrame then
+            element.PushedNameFrame:Hide()
+            hooksecurefunc(element.PushedNameFrame, "Show", function(self) self:Hide() end)
+        end
+
+        -- Strip textures on the element frame only (not children — icons handled by SkinLootIcon)
         for i = 1, element:GetNumRegions() do
             local region = select(i, element:GetRegions())
             if region and region:GetObjectType() == "Texture" then
                 local layer = region:GetDrawLayer()
                 if layer == "BACKGROUND" or layer == "BORDER" or layer == "HIGHLIGHT" then
+                    region:SetTexture(nil)
+                    region:SetAtlas("")
                     region:SetAlpha(0)
                 end
-                local atlas = region:GetAtlas()
-                if atlas and atlas:find("raritytag") then
+                if region:GetAtlas() and region:GetAtlas():find("raritytag") then
                     region:SetAlpha(0)
                 end
             end
         end
 
-        -- Kill highlight/pushed textures on child buttons (SetTexture clears the
-        -- rounded default art so the button's built-in hover can't show it)
+        -- Skin item buttons
         for i = 1, select("#", element:GetChildren()) do
             local child = select(i, element:GetChildren())
             local ctype = child:GetObjectType()
             if ctype == "Button" or ctype == "ItemButton" then
-                if child:GetHighlightTexture() then child:GetHighlightTexture():SetTexture("") end
                 if child:GetPushedTexture() then child:GetPushedTexture():SetTexture("") end
-                child:SetHighlightTexture("")
+                SkinLootIcon(child)
             end
         end
 
