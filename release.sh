@@ -21,7 +21,7 @@ if [ -n "${1:-}" ]; then
     sed -i "s/^## Version: .*/## Version: ${VERSION}/" "$TOC_FILE"
     echo "Updated ${TOC_FILE} version to ${VERSION}"
 else
-    VERSION=$(grep -oP '## Version: \K.*' "$TOC_FILE")
+    VERSION=$(sed -n 's/^## Version: //p' "$TOC_FILE" | tr -d '\r')
     if [ -z "$VERSION" ]; then
         echo "Error: could not read version from ${TOC_FILE}" >&2
         exit 1
