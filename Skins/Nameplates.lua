@@ -8,15 +8,10 @@ ns.NameplateSkin = NameplateSkin
 
 -- External tracking tables (never write keys to Blizzard frames)
 local skinnedFrames = {}
-local healthBackdrops = {}
-local castBarBackdrops = {}
 local hookedBars = {}
 local nameOverlays = {}  -- keyed by UnitFrame → our custom FontString
 local focusOverlays = {} -- keyed by UnitFrame → diagonal stripe Texture
 local questIndicators = {} -- keyed by UnitFrame → FontString
-
--- Borderless backdrop definition (flat, no edge)
-local FLAT_BG = { bgFile = C.FLAT_BACKDROP.bgFile }
 
 -- Guard against recursive SetStatusBarTexture / SetStatusBarColor hook calls
 local settingTexture = {}
@@ -78,12 +73,9 @@ local function EnforceFlatTexture(bar)
 end
 
 local function CreateBarBackdrop(bar)
-    local bdFrame = CreateFrame("Frame", nil, bar, "BackdropTemplate")
-    bdFrame:SetAllPoints()
-    bdFrame:SetFrameLevel(math.max(bar:GetFrameLevel() - 1, 0))
-    bdFrame:SetBackdrop(FLAT_BG)
-    bdFrame:SetBackdropColor(C.BACKDROP_COLOR[1], C.BACKDROP_COLOR[2], C.BACKDROP_COLOR[3], C.BACKDROP_COLOR[4])
-    return bdFrame
+    local bg = bar:CreateTexture(nil, "BACKGROUND")
+    bg:SetAllPoints()
+    bg:SetColorTexture(C.BACKDROP_COLOR[1], C.BACKDROP_COLOR[2], C.BACKDROP_COLOR[3], C.BACKDROP_COLOR[4])
 end
 
 local function SkinHealthBar(unitFrame)
@@ -119,7 +111,7 @@ local function SkinHealthBar(unitFrame)
         end)
     end
 
-    healthBackdrops[unitFrame] = CreateBarBackdrop(healthBar)
+    CreateBarBackdrop(healthBar)
 end
 
 local function SkinCastBar(unitFrame)
@@ -205,7 +197,7 @@ local function SkinCastBar(unitFrame)
         castBar.Icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
     end
 
-    castBarBackdrops[unitFrame] = CreateBarBackdrop(castBar)
+    CreateBarBackdrop(castBar)
 end
 
 local function CleanupChrome(unitFrame)
