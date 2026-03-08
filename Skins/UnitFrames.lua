@@ -81,6 +81,78 @@ local function KillRegion(region)
 end
 
 ---------------------------------------------------------------------------
+-- Name / Level helpers
+---------------------------------------------------------------------------
+
+local hookedNames = {}
+local levelTexts = {}
+
+local function StyleUnitName(nameFS, unit)
+    if not nameFS then return end
+    SE:StyleFont(nameFS, nil, "")
+    nameFS:SetShadowOffset(1, -1)
+    nameFS:SetShadowColor(0, 0, 0, 1)
+    if unit and UnitExists(unit) then
+        local r, g, b = GetUnitHealthColor(unit)
+        nameFS:SetTextColor(r, g, b)
+    end
+    if not hookedNames[nameFS] then
+        hookedNames[nameFS] = true
+        hooksecurefunc(nameFS, "SetTextColor", function(self)
+            if settingColor[self] then return end
+            if not UnitExists(unit) then return end
+            settingColor[self] = true
+            local r, g, b = GetUnitHealthColor(unit)
+            self:SetTextColor(r, g, b)
+            settingColor[self] = nil
+        end)
+    end
+end
+
+local function RefreshNameColor(nameFS, unit)
+    if not nameFS or not unit or not UnitExists(unit) then return end
+    settingColor[nameFS] = true
+    local r, g, b = GetUnitHealthColor(unit)
+    nameFS:SetTextColor(r, g, b)
+    settingColor[nameFS] = nil
+end
+
+local function CreateLevelText(parent, healthBar, unit)
+    if not healthBar then return end
+    local fs = parent:CreateFontString(nil, "OVERLAY")
+    SE:StyleFont(fs, nil, "")
+    fs:SetShadowOffset(1, -1)
+    fs:SetShadowColor(0, 0, 0, 1)
+    fs:SetPoint("BOTTOMRIGHT", healthBar, "TOPRIGHT", 0, 2)
+    levelTexts[unit] = fs
+    return fs
+end
+
+local function UpdateLevelText(unit)
+    local fs = levelTexts[unit]
+    if not fs then return end
+    if UnitExists(unit) then
+        local level = UnitLevel(unit)
+        if level == -1 then
+            fs:SetText("??")
+            fs:SetTextColor(1, 0.1, 0.1)
+        elseif level and level > 0 then
+            local color = GetCreatureDifficultyColor(level)
+            if color then
+                fs:SetTextColor(color.r, color.g, color.b)
+            else
+                fs:SetTextColor(1, 1, 1)
+            end
+            fs:SetText(level)
+        else
+            fs:SetText("")
+        end
+    else
+        fs:SetText("")
+    end
+end
+
+---------------------------------------------------------------------------
 -- Bar Background (no borders, just dark bg behind the fill)
 ---------------------------------------------------------------------------
 
@@ -449,10 +521,8 @@ local function SkinPlayerFrame()
         StripHealthBarsContainer(contentMain.HealthBarsContainer, healthBar)
     end
 
-    -- Style name
-    if frame.name then
-        SE:StyleFont(frame.name)
-    end
+    -- Style name (class-colored, no outline, shadow)
+    StyleUnitName(frame.name, "player")
 end
 
 ---------------------------------------------------------------------------
@@ -545,10 +615,16 @@ local function SkinTargetFrame()
         StripHealthBarsContainer(contentMain.HealthBarsContainer, healthBar)
     end
 
-    -- Style name
-    if frame.name then
-        SE:StyleFont(frame.name)
+    -- Style and position name above health bar to match player frame
+    StyleUnitName(frame.name, "target")
+    if frame.name and healthBar then
+        frame.name:ClearAllPoints()
+        frame.name:SetPoint("BOTTOMLEFT", healthBar, "TOPLEFT", 0, 2)
     end
+
+    -- Level text (right-aligned above health bar)
+    CreateLevelText(frame, healthBar, "target")
+    UpdateLevelText("target")
 
     -- Hook CheckClassification — fires every target change
     hooksecurefunc(frame, "CheckClassification", function(self)
@@ -627,6 +703,10 @@ local function SkinTargetFrame()
         if targetManaBar and UnitExists("target") then
             ApplyPowerColor(targetManaBar)
         end
+
+        -- Refresh name color and level
+        RefreshNameColor(frame.name, "target")
+        UpdateLevelText("target")
     end)
 end
 
@@ -719,10 +799,16 @@ local function SkinFocusFrame()
         StripHealthBarsContainer(contentMain.HealthBarsContainer, healthBar)
     end
 
-    -- Style name
-    if frame.name then
-        SE:StyleFont(frame.name)
+    -- Style and position name above health bar to match player frame
+    StyleUnitName(frame.name, "focus")
+    if frame.name and healthBar then
+        frame.name:ClearAllPoints()
+        frame.name:SetPoint("BOTTOMLEFT", healthBar, "TOPLEFT", 0, 2)
     end
+
+    -- Level text (right-aligned above health bar)
+    CreateLevelText(frame, healthBar, "focus")
+    UpdateLevelText("focus")
 
     -- Hook CheckClassification — fires every focus change
     hooksecurefunc(frame, "CheckClassification", function(self)
@@ -798,6 +884,10 @@ local function SkinFocusFrame()
         if focusManaBar and UnitExists("focus") then
             ApplyPowerColor(focusManaBar)
         end
+
+        -- Refresh name color and level
+        RefreshNameColor(FocusFrame.name, "focus")
+        UpdateLevelText("focus")
     end)
 end
 
@@ -816,6 +906,8 @@ local function RefreshTargetColors()
             ApplyPowerColor(bar)
         end
     end
+    RefreshNameColor(TargetFrame and TargetFrame.name, "target")
+    UpdateLevelText("target")
 end
 
 local function RefreshFocusColors()
@@ -829,6 +921,8 @@ local function RefreshFocusColors()
             ApplyPowerColor(bar)
         end
     end
+    RefreshNameColor(FocusFrame and FocusFrame.name, "focus")
+    UpdateLevelText("focus")
 end
 
 ---------------------------------------------------------------------------
