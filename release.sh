@@ -63,7 +63,29 @@ done
 ABS_RELEASE=$(cd "$RELEASE_DIR" && pwd -W 2>/dev/null || pwd)
 powershell -NoProfile -Command "Compress-Archive -Path '${ABS_RELEASE}\\${ADDON_NAME}' -DestinationPath '${ABS_RELEASE}\\${ZIP_NAME}' -Force"
 
+# Generate release.json for WowUp
+INTERFACE=$(sed -n 's/^## Interface: //p' "$TOC_FILE" | tr -d '\r')
+cat > "${RELEASE_DIR}/release.json" <<RJSON
+{
+  "releases": [
+    {
+      "name": "${ADDON_NAME} ${TAG}",
+      "version": "${VERSION}",
+      "filename": "${ZIP_NAME}",
+      "nolib": false,
+      "metadata": [
+        {
+          "flavor": "mainline",
+          "interface": ${INTERFACE}
+        }
+      ]
+    }
+  ]
+}
+RJSON
+
 echo "==> Created ${RELEASE_DIR}/${ZIP_NAME}"
+echo "==> Created ${RELEASE_DIR}/release.json"
 
 # --- Tag and push ---
 git tag -a "$TAG" -m "Release ${TAG}"
@@ -74,6 +96,7 @@ echo "==> Pushed tag ${TAG}"
 # --- Create GitHub release ---
 gh release create "$TAG" \
     "${RELEASE_DIR}/${ZIP_NAME}" \
+    "${RELEASE_DIR}/release.json" \
     --title "${ADDON_NAME} ${TAG}" \
     --generate-notes
 
