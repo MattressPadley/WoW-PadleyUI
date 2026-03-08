@@ -376,27 +376,46 @@ local function ScanPartyFrames()
     end
 end
 
+local function ScanRaidFrames()
+    for i = 1, 40 do
+        local frame = _G["CompactRaidFrame" .. i]
+        if frame then
+            SkinMemberFrame(frame)
+            RefreshColors(frame)
+        end
+    end
+end
+
 ---------------------------------------------------------------------------
 -- Apply
 ---------------------------------------------------------------------------
 
-local function HidePartyTitle()
+local function HideTitles()
+    -- Party title
     if CompactPartyFrameTitle then
         CompactPartyFrameTitle:SetAlpha(0)
     end
     if CompactPartyFrame and CompactPartyFrame.title then
         CompactPartyFrame.title:SetAlpha(0)
     end
+    -- Raid container chrome
+    if CompactRaidFrameContainer and CompactRaidFrameContainer.title then
+        CompactRaidFrameContainer.title:SetAlpha(0)
+    end
+    if CompactRaidFrameContainerBorderFrame then
+        CompactRaidFrameContainerBorderFrame:SetAlpha(0)
+    end
 end
 
 function PartyFrameSkin:Apply()
-    HidePartyTitle()
+    HideTitles()
 
-    -- Hook CompactUnitFrame_SetUnit to catch newly assigned party frames
+    -- Hook CompactUnitFrame_SetUnit to catch newly assigned party/raid frames
     hooksecurefunc("CompactUnitFrame_SetUnit", function(frame, unit)
         if not frame then return end
         local name = frame:GetName()
-        if not name or not name:find("^CompactPartyFrameMember") then return end
+        if not name then return end
+        if not name:find("^CompactPartyFrameMember") and not name:find("^CompactRaidFrame%d") then return end
 
         if not skinnedFrames[frame] then
             SkinMemberFrame(frame)
@@ -414,7 +433,8 @@ function PartyFrameSkin:Apply()
             -- Defer to next frame so Blizzard has time to create/assign frames
             C_Timer.After(0, function()
                 ScanPartyFrames()
-                HidePartyTitle()
+                ScanRaidFrames()
+                HideTitles()
             end)
         elseif event == "UNIT_DISPLAYPOWER" then
             -- Refresh power color when power type changes
@@ -429,9 +449,21 @@ function PartyFrameSkin:Apply()
                     end
                 end
             end
+            for i = 1, 40 do
+                local frame = _G["CompactRaidFrame" .. i]
+                if frame and frame.unit and frame.unit == arg1 then
+                    if frame.powerBar then
+                        local r, g, b = GetPowerColor(frame.unit)
+                        settingColor[frame.powerBar] = true
+                        frame.powerBar:SetStatusBarColor(r, g, b)
+                        settingColor[frame.powerBar] = nil
+                    end
+                end
+            end
         end
     end)
 
     -- Skin any frames already visible
     ScanPartyFrames()
+    ScanRaidFrames()
 end
