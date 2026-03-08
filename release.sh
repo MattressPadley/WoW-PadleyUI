@@ -6,7 +6,7 @@
 # Usage: ./release.sh [version]
 #   version  - e.g. 0.0.2 (optional, reads from TOC if omitted)
 #
-# Requires: git, gh (GitHub CLI), tar
+# Requires: git, gh (GitHub CLI), powershell
 
 set -euo pipefail
 
@@ -59,8 +59,9 @@ git ls-files --cached | grep -v -E '^\.(git|claude)' | grep -v -E '^(release\.sh
     cp "$f" "${RELEASE_DIR}/${ADDON_NAME}/${f}"
 done
 
-# Create zip using tar (produces standard zip with forward-slash paths)
-(cd "$RELEASE_DIR" && tar -a -cf "$ZIP_NAME" "$ADDON_NAME")
+# Create zip using PowerShell (Git Bash's tar doesn't support zip format)
+ABS_RELEASE=$(cd "$RELEASE_DIR" && pwd -W 2>/dev/null || pwd)
+powershell -NoProfile -Command "Compress-Archive -Path '${ABS_RELEASE}\\${ADDON_NAME}' -DestinationPath '${ABS_RELEASE}\\${ZIP_NAME}'"
 
 echo "==> Created ${RELEASE_DIR}/${ZIP_NAME}"
 
