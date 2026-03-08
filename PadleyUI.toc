@@ -4,6 +4,7 @@
 ## Author: Padley
 ## Version: 1.0.0
 ## OptionalDeps: Blizzard_DamageMeter, Blizzard_UIPanels_Game, BetterBags
+## SavedVariables: PadleyUI_DB
 
 Core\Constants.lua
 Core\SkinEngine.lua
@@ -20,5 +21,6 @@ Skins\Nameplates.lua
 Skins\CastBar.lua
 Skins\Items.lua
 Skins\UnitFrames.lua
+Skins\PartyFrames.lua
 Skins\BetterBags.lua
 PadleyUI.lua

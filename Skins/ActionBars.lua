@@ -3,11 +3,35 @@ local _, ns = ...
 local C = ns.C
 local SE = ns.SkinEngine
 
+-- Binding header/name globals (read by WoW's Key Bindings UI)
+BINDING_HEADER_PADLEYUI = "PadleyUI"
+BINDING_NAME_PADLEYUI_TOGGLE_ACTIONBAR_MOUSEOVER = "Toggle Action Bar Mouseover"
+
 local ActionBarSkin = {}
 ns.ActionBarSkin = ActionBarSkin
 
 -- External tracking table (avoids writing keys to Blizzard frames)
 local skinnedButtons = {}
+local mouseoverMode = false
+local hookedBars = {}
+
+local FADE_IN_TIME = 0.2
+local FADE_OUT_TIME = 0.3
+local FADE_OUT_DELAY = 0.15
+
+local function FadeBar(bar, targetAlpha)
+    if bar._padleyFading == targetAlpha then return end
+    bar._padleyFading = targetAlpha
+    if bar._padleyFadeTimer then bar._padleyFadeTimer:Cancel() end
+    if targetAlpha == 1 then
+        UIFrameFadeIn(bar, FADE_IN_TIME, bar:GetAlpha(), 1)
+    else
+        bar._padleyFadeTimer = C_Timer.NewTimer(FADE_OUT_DELAY, function()
+            UIFrameFadeOut(bar, FADE_OUT_TIME, bar:GetAlpha(), 0)
+            bar._padleyFadeTimer = nil
+        end)
+    end
+end
 
 -- All action bars and their button naming patterns
 -- container = buttons are unnamed children of container frames (Patch 12.0+)
@@ -221,6 +245,58 @@ local function HookBarVisibility()
     end
 end
 
+-- Apply mouseover alpha to all bars based on current mode (instant, no fade)
+local function SetMouseoverMode(enabled)
+    mouseoverMode = enabled
+    for _, barDef in ipairs(ACTION_BARS) do
+        local bar = _G[barDef.bar]
+        if bar then
+            if bar._padleyFadeTimer then bar._padleyFadeTimer:Cancel() end
+            bar._padleyFading = nil
+            UIFrameFadeRemoveFrame(bar)
+            bar:SetAlpha(enabled and 0 or 1)
+        end
+    end
+end
+
+-- Hook enter/leave on bars and their buttons for mouseover fade
+local function HookBarMouseover()
+    for _, barDef in ipairs(ACTION_BARS) do
+        local bar = _G[barDef.bar]
+        if bar and not hookedBars[bar] then
+            hookedBars[bar] = true
+
+            bar:HookScript("OnEnter", function(self)
+                if mouseoverMode then FadeBar(self, 1) end
+            end)
+            bar:HookScript("OnLeave", function(self)
+                if mouseoverMode and not self:IsMouseOver() then FadeBar(self, 0) end
+            end)
+
+            -- Buttons are the actual mouse targets
+            for i = 1, barDef.count do
+                local button = _G[barDef.prefix .. i]
+                if button then
+                    button:HookScript("OnEnter", function()
+                        if mouseoverMode and bar then FadeBar(bar, 1) end
+                    end)
+                    button:HookScript("OnLeave", function()
+                        if mouseoverMode and bar and not bar:IsMouseOver() then FadeBar(bar, 0) end
+                    end)
+                end
+            end
+        end
+    end
+end
+
+-- Global toggle function called by Bindings.xml
+function PadleyUI_ToggleActionBarMouseover()
+    mouseoverMode = not mouseoverMode
+    if not PadleyUI_DB then PadleyUI_DB = {} end
+    PadleyUI_DB.actionBarMouseover = mouseoverMode
+    SetMouseoverMode(mouseoverMode)
+end
+
 function ActionBarSkin:Apply()
     SkinAllBars()
     HookBarVisibility()
@@ -237,4 +313,15 @@ function ActionBarSkin:Apply()
 
     -- Deferred pass for late-initialized buttons
     C_Timer.After(0, SkinAllBars)
+
+    -- Restore saved mouseover state
+    if PadleyUI_DB and PadleyUI_DB.actionBarMouseover then
+        mouseoverMode = true
+    end
+
+    -- Hook mouseover enter/leave on all bars, then apply saved state
+    C_Timer.After(0, function()
+        HookBarMouseover()
+        SetMouseoverMode(mouseoverMode)
+    end)
 end

@@ -1,0 +1,5 @@
+<Bindings>
+  <Binding name="PADLEYUI_TOGGLE_ACTIONBAR_MOUSEOVER" default="R">
+    PadleyUI_ToggleActionBarMouseover()
+  </Binding>
+</Bindings>
