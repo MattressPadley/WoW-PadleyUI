@@ -13,6 +13,11 @@ local castBarBackdrops = {}
 local hookedBars = {}
 local nameOverlays = {}  -- keyed by UnitFrame → our custom FontString
 local focusOverlays = {} -- keyed by UnitFrame → diagonal stripe Texture
+local questIndicators = {} -- keyed by UnitFrame → FontString
+
+-- Hidden tooltip for quest detection (addon-owned, never shown)
+local questTooltip = CreateFrame("GameTooltip", "PadleyUIQuestTooltip", UIParent, "GameTooltipTemplate")
+questTooltip:SetOwner(UIParent, "ANCHOR_NONE")
 
 -- Borderless backdrop definition (flat, no edge)
 local FLAT_BG = { bgFile = C.FLAT_BACKDROP.bgFile }
@@ -311,6 +316,66 @@ local function RefreshAllFocusOverlays()
     end
 end
 
+local function GetQuestProgressForUnit(unit)
+    if not unit or not UnitExists(unit) then return nil end
+
+    questTooltip:SetOwner(UIParent, "ANCHOR_NONE")
+    questTooltip:SetUnit(unit)
+
+    local inQuestBlock = false
+
+    for i = 2, questTooltip:NumLines() do
+        local line = _G["PadleyUIQuestTooltipTextLeft" .. i]
+        if not line then break end
+
+        local text = line:GetText()
+        if not text or text == "" then
+            inQuestBlock = false
+        else
+            local r, g, b = line:GetTextColor()
+            -- Quest title lines are yellow (r~1, g~0.82, b~0)
+            if r > 0.9 and g > 0.7 and b < 0.2 then
+                inQuestBlock = true
+            elseif inQuestBlock then
+                -- Look for "X/Y" progress pattern in objective lines
+                local fulfilled, required = text:match("(%d+)%s*/%s*(%d+)")
+                if fulfilled and required and tonumber(fulfilled) < tonumber(required) then
+                    questTooltip:Hide()
+                    return fulfilled .. "/" .. required
+                end
+            end
+        end
+    end
+
+    questTooltip:Hide()
+    return nil
+end
+
+local function CreateQuestIndicator(unitFrame)
+    if not unitFrame.healthBar or questIndicators[unitFrame] then return end
+
+    local text = unitFrame.healthBar:CreateFontString(nil, "OVERLAY")
+    text:SetPoint("LEFT", unitFrame.healthBar, "RIGHT", 4, 0)
+    StyleFontString(text)
+    text:SetTextColor(1, 0.82, 0)
+    text:Hide()
+
+    questIndicators[unitFrame] = text
+end
+
+local function UpdateQuestIndicator(unitFrame)
+    local indicator = questIndicators[unitFrame]
+    if not indicator then return end
+
+    local progress = GetQuestProgressForUnit(unitFrame.unit)
+    if progress then
+        indicator:SetText(progress)
+        indicator:Show()
+    else
+        indicator:Hide()
+    end
+end
+
 local function SkinNamePlate(unitFrame)
     if not unitFrame or skinnedFrames[unitFrame] then return end
     skinnedFrames[unitFrame] = true
@@ -320,6 +385,7 @@ local function SkinNamePlate(unitFrame)
     CleanupChrome(unitFrame)
     StyleAllText(unitFrame)
     CreateFocusOverlay(unitFrame)
+    CreateQuestIndicator(unitFrame)
 end
 
 local function RefreshNamePlate(unitFrame)
@@ -333,6 +399,7 @@ local function RefreshNamePlate(unitFrame)
     end
     SyncNameText(unitFrame)
     UpdateFocusOverlay(unitFrame)
+    UpdateQuestIndicator(unitFrame)
 end
 
 function NameplateSkin:Apply()
@@ -342,6 +409,7 @@ function NameplateSkin:Apply()
     eventFrame:RegisterEvent("UNIT_THREAT_LIST_UPDATE")
     eventFrame:RegisterEvent("UNIT_THREAT_SITUATION_UPDATE")
     eventFrame:RegisterEvent("PLAYER_FOCUS_CHANGED")
+    eventFrame:RegisterEvent("QUEST_LOG_UPDATE")
     eventFrame:SetScript("OnEvent", function(self, event, ...)
         if event == "NAME_PLATE_CREATED" then
             local plate = ...
@@ -366,6 +434,12 @@ function NameplateSkin:Apply()
             end
         elseif event == "PLAYER_FOCUS_CHANGED" then
             RefreshAllFocusOverlays()
+        elseif event == "QUEST_LOG_UPDATE" then
+            for _, plate in pairs(C_NamePlate.GetNamePlates()) do
+                if plate.UnitFrame and skinnedFrames[plate.UnitFrame] then
+                    UpdateQuestIndicator(plate.UnitFrame)
+                end
+            end
         end
     end)
 
