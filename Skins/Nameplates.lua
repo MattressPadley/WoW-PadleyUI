@@ -15,10 +15,6 @@ local nameOverlays = {}  -- keyed by UnitFrame → our custom FontString
 local focusOverlays = {} -- keyed by UnitFrame → diagonal stripe Texture
 local questIndicators = {} -- keyed by UnitFrame → FontString
 
--- Hidden tooltip for quest detection (addon-owned, never shown)
-local questTooltip = CreateFrame("GameTooltip", "PadleyUIQuestTooltip", UIParent, "GameTooltipTemplate")
-questTooltip:SetOwner(UIParent, "ANCHOR_NONE")
-
 -- Borderless backdrop definition (flat, no edge)
 local FLAT_BG = { bgFile = C.FLAT_BACKDROP.bgFile }
 
@@ -319,35 +315,32 @@ end
 local function GetQuestProgressForUnit(unit)
     if not unit or not UnitExists(unit) then return nil end
 
-    questTooltip:SetOwner(UIParent, "ANCHOR_NONE")
-    questTooltip:SetUnit(unit)
+    -- UnitName returns secret values for nameplate units in 12.0;
+    -- pcall to detect and bail out gracefully
+    local ok, unitName = pcall(UnitName, unit)
+    if not ok or not unitName then return nil end
 
-    local inQuestBlock = false
+    -- Verify the name is usable (not a secret value)
+    local nameOk = pcall(string.len, unitName)
+    if not nameOk then return nil end
 
-    for i = 2, questTooltip:NumLines() do
-        local line = _G["PadleyUIQuestTooltipTextLeft" .. i]
-        if not line then break end
-
-        local text = line:GetText()
-        if not text or text == "" then
-            inQuestBlock = false
-        else
-            local r, g, b = line:GetTextColor()
-            -- Quest title lines are yellow (r~1, g~0.82, b~0)
-            if r > 0.9 and g > 0.7 and b < 0.2 then
-                inQuestBlock = true
-            elseif inQuestBlock then
-                -- Look for "X/Y" progress pattern in objective lines
-                local fulfilled, required = text:match("(%d+)%s*/%s*(%d+)")
-                if fulfilled and required and tonumber(fulfilled) < tonumber(required) then
-                    questTooltip:Hide()
-                    return fulfilled .. "/" .. required
+    -- Scan quest log for objectives mentioning this unit
+    for i = 1, C_QuestLog.GetNumQuestLogEntries() do
+        local info = C_QuestLog.GetInfo(i)
+        if info and not info.isHeader and not info.isHidden then
+            local objectives = C_QuestLog.GetQuestObjectives(info.questID)
+            if objectives then
+                for _, obj in ipairs(objectives) do
+                    if not obj.finished and obj.text
+                        and obj.numRequired and obj.numRequired > 0
+                        and obj.text:find(unitName, 1, true) then
+                        return obj.numFulfilled .. "/" .. obj.numRequired
+                    end
                 end
             end
         end
     end
 
-    questTooltip:Hide()
     return nil
 end
 
@@ -367,13 +360,22 @@ local function UpdateQuestIndicator(unitFrame)
     local indicator = questIndicators[unitFrame]
     if not indicator then return end
 
-    local progress = GetQuestProgressForUnit(unitFrame.unit)
-    if progress then
-        indicator:SetText(progress)
-        indicator:Show()
-    else
-        indicator:Hide()
-    end
+    -- Defer to next frame to escape any tainted execution context
+    -- (UnitName returns secret values when called from hook chains)
+    local unit = unitFrame.unit
+    C_Timer.After(0, function()
+        if not UnitExists(unit) then
+            indicator:Hide()
+            return
+        end
+        local progress = GetQuestProgressForUnit(unit)
+        if progress then
+            indicator:SetText(progress)
+            indicator:Show()
+        else
+            indicator:Hide()
+        end
+    end)
 end
 
 local function SkinNamePlate(unitFrame)
