@@ -12,6 +12,7 @@ local healthBackdrops = {}
 local castBarBackdrops = {}
 local hookedBars = {}
 local nameOverlays = {}  -- keyed by UnitFrame → our custom FontString
+local focusOverlays = {} -- keyed by UnitFrame → diagonal stripe Texture
 
 -- Borderless backdrop definition (flat, no edge)
 local FLAT_BG = { bgFile = C.FLAT_BACKDROP.bgFile }
@@ -276,6 +277,40 @@ local function StyleAllText(unitFrame)
     end
 end
 
+local function CreateFocusOverlay(unitFrame)
+    if not unitFrame.healthBar or focusOverlays[unitFrame] then return end
+
+    local overlay = unitFrame.healthBar:CreateTexture(nil, "OVERLAY")
+    overlay:SetAllPoints(unitFrame.healthBar)
+    overlay:SetTexture("Interface\\AddOns\\PadleyUI\\Textures\\DiagonalStripes", "REPEAT", "REPEAT")
+    overlay:SetHorizTile(true)
+    overlay:SetVertTile(true)
+    overlay:SetVertexColor(0, 0, 0, 0.2)
+    overlay:Hide()
+
+    focusOverlays[unitFrame] = overlay
+end
+
+local function UpdateFocusOverlay(unitFrame)
+    local overlay = focusOverlays[unitFrame]
+    if not overlay then return end
+
+    local unit = unitFrame.unit
+    if unit and UnitExists("focus") and UnitIsUnit(unit, "focus") then
+        overlay:Show()
+    else
+        overlay:Hide()
+    end
+end
+
+local function RefreshAllFocusOverlays()
+    for _, plate in pairs(C_NamePlate.GetNamePlates()) do
+        if plate.UnitFrame and skinnedFrames[plate.UnitFrame] then
+            UpdateFocusOverlay(plate.UnitFrame)
+        end
+    end
+end
+
 local function SkinNamePlate(unitFrame)
     if not unitFrame or skinnedFrames[unitFrame] then return end
     skinnedFrames[unitFrame] = true
@@ -284,6 +319,7 @@ local function SkinNamePlate(unitFrame)
     SkinCastBar(unitFrame)
     CleanupChrome(unitFrame)
     StyleAllText(unitFrame)
+    CreateFocusOverlay(unitFrame)
 end
 
 local function RefreshNamePlate(unitFrame)
@@ -296,6 +332,7 @@ local function RefreshNamePlate(unitFrame)
         unitFrame.name:SetAlpha(0)
     end
     SyncNameText(unitFrame)
+    UpdateFocusOverlay(unitFrame)
 end
 
 function NameplateSkin:Apply()
@@ -304,6 +341,7 @@ function NameplateSkin:Apply()
     eventFrame:RegisterEvent("NAME_PLATE_UNIT_ADDED")
     eventFrame:RegisterEvent("UNIT_THREAT_LIST_UPDATE")
     eventFrame:RegisterEvent("UNIT_THREAT_SITUATION_UPDATE")
+    eventFrame:RegisterEvent("PLAYER_FOCUS_CHANGED")
     eventFrame:SetScript("OnEvent", function(self, event, ...)
         if event == "NAME_PLATE_CREATED" then
             local plate = ...
@@ -321,12 +359,13 @@ function NameplateSkin:Apply()
             RefreshNamePlate(plate.UnitFrame)
         elseif event == "UNIT_THREAT_LIST_UPDATE"
             or event == "UNIT_THREAT_SITUATION_UPDATE" then
-            -- Update all visible nameplates (threat can shift across multiple)
             for _, plate in pairs(C_NamePlate.GetNamePlates()) do
                 if plate.UnitFrame and skinnedFrames[plate.UnitFrame] then
                     UpdateThreatColor(plate.UnitFrame)
                 end
             end
+        elseif event == "PLAYER_FOCUS_CHANGED" then
+            RefreshAllFocusOverlays()
         end
     end)
 
