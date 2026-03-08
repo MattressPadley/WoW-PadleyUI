@@ -3,7 +3,7 @@
 ## Notes: A custom UI addon by Padley - skins built-in Blizzard frames
 ## Author: Padley
 ## Version: 1.0.0
-## OptionalDeps: Blizzard_DamageMeter, Blizzard_UIPanels_Game
+## OptionalDeps: Blizzard_DamageMeter, Blizzard_UIPanels_Game, BetterBags
 
 Core\Constants.lua
 Core\SkinEngine.lua
@@ -17,5 +17,8 @@ Skins\Minimap.lua
 Skins\ActionBars.lua
 Skins\CooldownTracker.lua
 Skins\Nameplates.lua
+Skins\CastBar.lua
 Skins\Items.lua
+Skins\UnitFrames.lua
+Skins\BetterBags.lua
 PadleyUI.lua

@@ -16,6 +16,8 @@ frame:SetScript("OnEvent", function(self, event, loadedAddon)
         ns.CooldownTrackerSkin:Apply()
         ns.NameplateSkin:Apply()
         ns.ItemSkin:Apply()
+        ns.CastBarSkin:Apply()
+        ns.UnitFrameSkin:Apply()
 
         -- Blizzard_DamageMeter is in OptionalDeps so it loads BEFORE us.
         -- By the time this fires, we already missed its ADDON_LOADED event.
@@ -25,6 +27,11 @@ frame:SetScript("OnEvent", function(self, event, loadedAddon)
         if C_AddOns.IsAddOnLoaded("Blizzard_UIPanels_Game") then
             ns.LootSkin:Apply()
         end
+        if C_AddOns.IsAddOnLoaded("BetterBags") then
+            ns.BetterBagsSkin:Apply()
+        end
+    elseif loadedAddon == "BetterBags" then
+        ns.BetterBagsSkin:Apply()
     elseif loadedAddon == "Blizzard_DamageMeter" then
         -- Fallback: if it loads on-demand after us
         ns.DamageMeterSkin:Apply()
