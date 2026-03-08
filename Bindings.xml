@@ -2,4 +2,7 @@
   <Binding name="PADLEYUI_TOGGLE_ACTIONBAR_MOUSEOVER" default="R">
     PadleyUI_ToggleActionBarMouseover()
   </Binding>
+  <Binding name="PADLEYUI_TOGGLE_QUEST_TRACKER">
+    PadleyUI_ToggleQuestTracker()
+  </Binding>
 </Bindings>

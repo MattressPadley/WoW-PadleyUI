@@ -6,6 +6,7 @@ local SE = ns.SkinEngine
 -- Binding header/name globals (read by WoW's Key Bindings UI)
 BINDING_HEADER_PADLEYUI = "PadleyUI"
 BINDING_NAME_PADLEYUI_TOGGLE_ACTIONBAR_MOUSEOVER = "Toggle Action Bar Mouseover"
+BINDING_NAME_PADLEYUI_TOGGLE_QUEST_TRACKER = "Toggle Quest Tracker"
 
 local ActionBarSkin = {}
 ns.ActionBarSkin = ActionBarSkin
@@ -297,6 +298,15 @@ function PadleyUI_ToggleActionBarMouseover()
     SetMouseoverMode(mouseoverMode)
 end
 
+function PadleyUI_ToggleQuestTracker()
+    if not PadleyUI_DB then PadleyUI_DB = {} end
+    local hidden = not PadleyUI_DB.questTrackerHidden
+    PadleyUI_DB.questTrackerHidden = hidden
+    if ObjectiveTrackerFrame then
+        ObjectiveTrackerFrame:SetShown(not hidden)
+    end
+end
+
 function ActionBarSkin:Apply()
     SkinAllBars()
     HookBarVisibility()
@@ -324,4 +334,9 @@ function ActionBarSkin:Apply()
         HookBarMouseover()
         SetMouseoverMode(mouseoverMode)
     end)
+
+    -- Restore saved quest tracker state
+    if PadleyUI_DB and PadleyUI_DB.questTrackerHidden and ObjectiveTrackerFrame then
+        ObjectiveTrackerFrame:SetShown(false)
+    end
 end
