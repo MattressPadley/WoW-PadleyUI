@@ -42,7 +42,8 @@ local THREAT_TANK = {
 local threatOverrides = {}  -- unitFrame → { r, g, b } or nil
 
 local function GetThreatColor(unit)
-    local status = UnitThreatSituation("player", unit) or 0
+    local status = UnitThreatSituation("player", unit)
+    if status == nil then return nil end  -- not on threat table (e.g. neutral/unpulled)
     local spec = GetSpecialization()
     local isTank = spec and GetSpecializationRole(spec) == "TANK"
     local colors = isTank and THREAT_TANK or THREAT_DPS
