@@ -31,6 +31,10 @@ local BorderPositions = {
         health = { width = 123, height = 19, startX = 0, startY = -1 },
         mana   = { width = 123, height = 8,  startX = 0, startY = -2 },
     },
+    focus = {
+        health = { width = 123, height = 19, startX = 0, startY = -1 },
+        mana   = { width = 123, height = 8,  startX = 0, startY = -2 },
+    },
 }
 
 ---------------------------------------------------------------------------
@@ -627,6 +631,177 @@ local function SkinTargetFrame()
 end
 
 ---------------------------------------------------------------------------
+-- Skin Focus Frame
+---------------------------------------------------------------------------
+
+local focusHealthBar, focusManaBar
+
+local function SkinFocusFrame()
+    local frame = FocusFrame
+    if not frame or skinnedFrames[frame] then return end
+    skinnedFrames[frame] = true
+
+    local container = frame.TargetFrameContainer
+    local content = frame.TargetFrameContent
+    local contentMain = content and content.TargetFrameContentMain
+    local contentContext = content and content.TargetFrameContentContextual
+    local healthBar, manaBar = GetBars(frame)
+    focusHealthBar = healthBar
+    focusManaBar = manaBar
+
+    -- Skin bars
+    SkinHealthBar(healthBar, "focus", BorderPositions.focus.health)
+    SkinPowerBar(manaBar, "focus", BorderPositions.focus.mana)
+
+    -- Align mana bar directly under health bar
+    if manaBar and healthBar then
+        manaBar:ClearAllPoints()
+        manaBar:SetPoint("TOPLEFT", healthBar, "BOTTOMLEFT", 0, BorderPositions.focus.mana.startY)
+    end
+
+    -- Strip masks from parent containers that clip the bars
+    if contentMain and contentMain.HealthBarsContainer then
+        RemoveBarMasks(contentMain.HealthBarsContainer)
+    end
+    if contentMain and contentMain.ManaBarArea then
+        RemoveBarMasks(contentMain.ManaBarArea)
+    end
+
+    -- Ensure backgrounds are visible
+    if barBgFrames[healthBar] then barBgFrames[healthBar]:SetAlpha(1) end
+    if barBgFrames[manaBar] then barBgFrames[manaBar]:SetAlpha(1) end
+
+    -- Hide container art
+    if container then
+        container:SetAlpha(0)
+        KillRegion(container.FrameTexture)
+        KillRegion(container.Flash)
+        KillRegion(container.FrameFlash)
+        KillRegion(container.Portrait)
+        KillRegion(container.PortraitMask)
+        KillRegion(container.BossPortraitFrameTexture)
+        KillRegion(container.AlternatePowerFrameTexture)
+    end
+
+    -- Hide contextual elements + HighLevelTexture
+    if contentContext then
+        contentContext:SetAlpha(0)
+        hooksecurefunc(contentContext, "SetAlpha", function(self, a)
+            if a ~= 0 then self:SetAlpha(0) end
+        end)
+        KillRegion(contentContext.HighLevelTexture)
+    end
+
+    -- Hide individual elements
+    if contentMain then
+        KillRegion(contentMain.StatusTexture)
+        KillRegion(contentMain.ReputationColor)
+        if contentMain.LevelText then
+            KillRegion(contentMain.LevelText)
+        end
+    end
+
+    -- Hide threat indicators
+    KillRegion(frame.threatIndicator)
+    if frame.threatNumericIndicator then
+        KillRegion(frame.threatNumericIndicator)
+    end
+
+    -- Hide selection highlight
+    if frame.Selection then
+        KillRegion(frame.Selection)
+    end
+
+    -- Strip ALL textures from content hierarchy
+    StripAllTextures(content)
+    StripAllTextures(contentMain)
+    if contentMain and contentMain.HealthBarsContainer then
+        StripHealthBarsContainer(contentMain.HealthBarsContainer, healthBar)
+    end
+
+    -- Style name
+    if frame.name then
+        SE:StyleFont(frame.name)
+    end
+
+    -- Hook CheckClassification — fires every focus change
+    hooksecurefunc(frame, "CheckClassification", function(self)
+        -- Re-hide container art
+        if container then
+            container:SetAlpha(0)
+            if container.FrameTexture then container.FrameTexture:SetAlpha(0) end
+            if container.BossPortraitFrameTexture then container.BossPortraitFrameTexture:SetAlpha(0) end
+        end
+
+        -- Re-hide contextual elements
+        if contentContext then
+            contentContext:SetAlpha(0)
+            if contentContext.HighLevelTexture then contentContext.HighLevelTexture:SetAlpha(0) end
+        end
+
+        -- Re-strip content textures
+        StripAllTextures(content)
+        StripAllTextures(contentMain)
+
+        -- Re-strip HealthBarsContainer overlays
+        if contentMain and contentMain.HealthBarsContainer then
+            StripHealthBarsContainer(contentMain.HealthBarsContainer, focusHealthBar)
+        end
+
+        -- Re-strip health bar children
+        if focusHealthBar then
+            local fillTex = focusHealthBar:GetStatusBarTexture()
+            for i = 1, focusHealthBar:GetNumRegions() do
+                local region = select(i, focusHealthBar:GetRegions())
+                if region and region:GetObjectType() == "Texture" and region ~= fillTex then
+                    KillRegion(region)
+                end
+            end
+            for i = 1, select("#", focusHealthBar:GetChildren()) do
+                local child = select(i, focusHealthBar:GetChildren())
+                if child and child ~= barBgFrames[focusHealthBar] then
+                    KillRegion(child)
+                    for j = 1, child:GetNumRegions() do
+                        local region = select(j, child:GetRegions())
+                        if region and region:GetObjectType() == "Texture" then
+                            KillRegion(region)
+                        end
+                    end
+                end
+            end
+            EnforceFlatTexture(focusHealthBar)
+        end
+
+        -- Re-remove masks
+        if focusHealthBar then
+            strippedMasks[focusHealthBar] = nil
+            RemoveBarMasks(focusHealthBar)
+        end
+        if focusManaBar then
+            strippedMasks[focusManaBar] = nil
+            RemoveBarMasks(focusManaBar)
+
+            local bg = barBgFrames[focusManaBar]
+            if bg then
+                if not focusManaBar:IsShown() then
+                    bg:SetAlpha(0)
+                else
+                    bg:SetAlpha(1)
+                end
+            end
+        end
+
+        -- Re-apply colors
+        if focusHealthBar and UnitExists("focus") then
+            ApplyHealthColor(focusHealthBar)
+        end
+        if focusManaBar and UnitExists("focus") then
+            ApplyPowerColor(focusManaBar)
+        end
+    end)
+end
+
+---------------------------------------------------------------------------
 -- Refresh colors on events
 ---------------------------------------------------------------------------
 
@@ -638,6 +813,19 @@ local function RefreshTargetColors()
     end
     for bar, unit in pairs(powerBarUnits) do
         if unit == "target" and UnitExists("target") then
+            ApplyPowerColor(bar)
+        end
+    end
+end
+
+local function RefreshFocusColors()
+    for bar, unit in pairs(frameUnits) do
+        if unit == "focus" and UnitExists("focus") then
+            ApplyHealthColor(bar)
+        end
+    end
+    for bar, unit in pairs(powerBarUnits) do
+        if unit == "focus" and UnitExists("focus") then
             ApplyPowerColor(bar)
         end
     end
@@ -697,6 +885,17 @@ local function SkinTargetAuras()
     end
 end
 
+local function SkinFocusAuras()
+    for i = 1, 32 do
+        local buff = _G["FocusFrameBuff" .. i]
+        if buff then SkinAuraButton(buff) end
+    end
+    for i = 1, 16 do
+        local debuff = _G["FocusFrameDebuff" .. i]
+        if debuff then SkinAuraButton(debuff) end
+    end
+end
+
 ---------------------------------------------------------------------------
 -- Apply
 ---------------------------------------------------------------------------
@@ -704,6 +903,7 @@ end
 function UnitFrameSkin:Apply()
     SkinPlayerFrame()
     SkinTargetFrame()
+    SkinFocusFrame()
 
     -- Global hook: fires AFTER Blizzard's full health bar update (including color reset)
     -- This catches lockColor/desaturated/vertex-color recoloring that bypasses SetStatusBarColor
@@ -716,14 +916,22 @@ function UnitFrameSkin:Apply()
 
     local eventFrame = CreateFrame("Frame")
     eventFrame:RegisterEvent("PLAYER_TARGET_CHANGED")
+    eventFrame:RegisterEvent("PLAYER_FOCUS_CHANGED")
     eventFrame:RegisterEvent("UNIT_DISPLAYPOWER")
-    eventFrame:RegisterUnitEvent("UNIT_AURA", "target")
+    eventFrame:RegisterUnitEvent("UNIT_AURA", "target", "focus")
     eventFrame:SetScript("OnEvent", function(self, event, arg1)
         if event == "PLAYER_TARGET_CHANGED" then
             RefreshTargetColors()
             C_Timer.After(0, SkinTargetAuras)
+        elseif event == "PLAYER_FOCUS_CHANGED" then
+            RefreshFocusColors()
+            C_Timer.After(0, SkinFocusAuras)
         elseif event == "UNIT_AURA" then
-            C_Timer.After(0, SkinTargetAuras)
+            if arg1 == "target" then
+                C_Timer.After(0, SkinTargetAuras)
+            elseif arg1 == "focus" then
+                C_Timer.After(0, SkinFocusAuras)
+            end
         elseif event == "UNIT_DISPLAYPOWER" then
             for bar, unit in pairs(powerBarUnits) do
                 if unit == arg1 then
