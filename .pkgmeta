@@ -1,0 +1,8 @@
+package-as: PadleyUI
+ignore:
+  - .github
+  - .claude
+  - .gitignore
+  - CLAUDE.md
+  - release.sh
+  - release
