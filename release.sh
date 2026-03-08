@@ -53,15 +53,16 @@ rm -rf "$RELEASE_DIR"
 mkdir -p "${RELEASE_DIR}/${ADDON_NAME}"
 
 # Copy addon files (everything tracked by git, excluding dev files)
-git ls-files --cached | grep -v -E '^\.(git|claude)' | grep -v -E '^(release\.sh|CLAUDE\.md)' | while read -r f; do
+git ls-files --cached | grep -v -E '^\.(git|claude)' | grep -v -E '^(release\.sh|build-zip\.ps1|CLAUDE\.md)' | while read -r f; do
     dir=$(dirname "$f")
     mkdir -p "${RELEASE_DIR}/${ADDON_NAME}/${dir}"
     cp "$f" "${RELEASE_DIR}/${ADDON_NAME}/${f}"
 done
 
-# Create the zip from the release dir so the top-level folder is PadleyUI/
+# Create the zip with forward-slash paths (ZIP spec requirement)
 ABS_RELEASE=$(cd "$RELEASE_DIR" && pwd -W 2>/dev/null || pwd)
-powershell -NoProfile -Command "Compress-Archive -Path '${ABS_RELEASE}\\${ADDON_NAME}' -DestinationPath '${ABS_RELEASE}\\${ZIP_NAME}' -Force"
+powershell -NoProfile -ExecutionPolicy Bypass -File build-zip.ps1 \
+    -SourceDir "$ABS_RELEASE" -AddonName "$ADDON_NAME" -ZipPath "${ABS_RELEASE}\\${ZIP_NAME}"
 
 # Generate release.json for WowUp
 INTERFACE=$(sed -n 's/^## Interface: //p' "$TOC_FILE" | tr -d '\r')
