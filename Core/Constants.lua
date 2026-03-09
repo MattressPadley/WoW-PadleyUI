@@ -1,5 +1,6 @@
 local _, ns = ...
 
+-- PadleyUI shared constants
 ns.C = {
     -- Backdrop
     BACKDROP_COLOR = { 0, 0, 0, 0.6 },
