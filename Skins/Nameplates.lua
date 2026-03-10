@@ -15,10 +15,10 @@ local targetArrows = {}  -- keyed by UnitFrame → { left, right }
 local questIndicators = {} -- keyed by UnitFrame → FontString
 local hoverBorders = {}   -- keyed by UnitFrame → backdrop Frame
 
--- Guard against recursive SetStatusBarTexture / SetStatusBarColor hook calls
-local settingTexture = {}
-local settingColor = {}
-local nonInterruptible = {}  -- castBar → true/false
+-- Custom bars overlaid on Blizzard's (alpha-zeroed) bars
+local customHealthBars = {}   -- Blizzard healthBar → our StatusBar
+local customCastBars = {}     -- Blizzard castBar → { bar, icon, text }
+local blizzardHealthColors = {} -- Blizzard healthBar → { r, g, b } (cached reaction color)
 
 -- Threat color tables (Plater-style defaults)
 -- nil = no override, use Blizzard's default reaction color
@@ -51,155 +51,195 @@ local function UpdateThreatColor(unitFrame)
     local unit = unitFrame.unit
     if not unit or not UnitExists(unit) or not UnitCanAttack("player", unit) then
         threatOverrides[unitFrame] = nil
+        -- Restore Blizzard's reaction color on our custom bar
+        local custom = customHealthBars[unitFrame.healthBar]
+        local bc = blizzardHealthColors[unitFrame.healthBar]
+        if custom and bc then
+            custom:SetStatusBarColor(bc[1], bc[2], bc[3])
+        end
         return
     end
     threatOverrides[unitFrame] = GetThreatColor(unit)
     local color = threatOverrides[unitFrame]
-    if color and unitFrame.healthBar then
-        settingColor[unitFrame.healthBar] = true
-        unitFrame.healthBar:SetStatusBarColor(color[1], color[2], color[3])
-        settingColor[unitFrame.healthBar] = nil
+    local custom = customHealthBars[unitFrame.healthBar]
+    if custom then
+        if color then
+            custom:SetStatusBarColor(color[1], color[2], color[3])
+        else
+            local bc = blizzardHealthColors[unitFrame.healthBar]
+            if bc then
+                custom:SetStatusBarColor(bc[1], bc[2], bc[3])
+            end
+        end
     end
 end
 
-local function EnforceFlatTexture(bar)
-    if settingTexture[bar] then return end
-    local tex = bar:GetStatusBarTexture()
-    if tex and tex:GetTexture() ~= C.BAR_TEXTURE then
-        -- Use SetStatusBarTexture on the bar (not SetTexture on the region)
-        -- to preserve the bar's SetStatusBarColor tint
-        settingTexture[bar] = true
-        bar:SetStatusBarTexture(C.BAR_TEXTURE)
-        settingTexture[bar] = nil
-    end
+local NAMEPLATE_FONT_SIZE = C.FONT_SIZE + 2
+
+local function StyleFontString(fs)
+    if not fs or not fs.SetFont then return end
+    SE:StyleFont(fs, NAMEPLATE_FONT_SIZE, "")
+    fs:SetShadowOffset(1, -1)
+    fs:SetShadowColor(0, 0, 0, 1)
 end
 
-local function CreateBarBackdrop(bar)
-    local bg = bar:CreateTexture(nil, "BACKGROUND")
-    bg:SetAllPoints()
-    bg:SetColorTexture(C.BACKDROP_COLOR[1], C.BACKDROP_COLOR[2], C.BACKDROP_COLOR[3], C.BACKDROP_COLOR[4])
+local function UpdateCastBarInterruptColor(unitFrame)
+    local castBar = unitFrame.castBar
+    if not castBar or not unitFrame.unit then return end
+    local custom = customCastBars[castBar]
+    if not custom then return end
+
+    local name, _, texture, _, _, _, _, ni = UnitCastingInfo(unitFrame.unit)
+    if type(name) == "nil" then
+        name, _, texture, _, _, _, ni = UnitChannelInfo(unitFrame.unit)
+    end
+    if type(name) == "nil" then return end
+
+    -- Sync icon and text
+    if custom.icon and texture then custom.icon:SetTexture(texture) end
+    if custom.text then custom.text:SetText(name) end
+
+    -- Color via secret-safe path: EvaluateColorValueFromBoolean(bool, trueVal, falseVal)
+    -- SetVertexColor on the fill texture accepts secret numbers and persists through SetValue
+    local r = C_CurveUtil.EvaluateColorValueFromBoolean(ni, 0.7, 1)
+    local b = C_CurveUtil.EvaluateColorValueFromBoolean(ni, 0.7, 0)
+    custom.bar:GetStatusBarTexture():SetVertexColor(r, 0.7, b)
 end
 
 local function SkinHealthBar(unitFrame)
     local healthBar = unitFrame.healthBar
     if not healthBar then return end
 
-    SE:SkinStatusBar(healthBar)
-
-    -- Alpha-zero all texture regions except the fill texture
-    local fillTex = healthBar:GetStatusBarTexture()
+    -- Alpha-zero all Blizzard regions (fill, borders, decorations)
     for i = 1, healthBar:GetNumRegions() do
         local region = select(i, healthBar:GetRegions())
-        if region and region:GetObjectType() == "Texture" and region ~= fillTex then
-            region:SetAlpha(0)
-        end
+        if region then region:SetAlpha(0) end
     end
 
-    -- Hook instance to persist flat texture and enforce threat colors
     if not hookedBars[healthBar] then
         hookedBars[healthBar] = true
-        hooksecurefunc(healthBar, "SetStatusBarTexture", function(self)
-            EnforceFlatTexture(self)
+
+        -- Our own StatusBar, child of Blizzard's healthBar
+        local bar = CreateFrame("StatusBar", nil, healthBar)
+        bar:SetStatusBarTexture(C.BAR_TEXTURE)
+        bar:SetAllPoints()
+        bar:SetFrameLevel(healthBar:GetFrameLevel() + 2)
+        customHealthBars[healthBar] = bar
+
+        -- Backdrop
+        local bg = bar:CreateTexture(nil, "BACKGROUND")
+        bg:SetAllPoints()
+        bg:SetColorTexture(C.BACKDROP_COLOR[1], C.BACKDROP_COLOR[2],
+                           C.BACKDROP_COLOR[3], C.BACKDROP_COLOR[4])
+
+        -- Mirror progress
+        hooksecurefunc(healthBar, "SetMinMaxValues", function(self, min, max)
+            local c = customHealthBars[self]
+            if c then c:SetMinMaxValues(min, max) end
         end)
-        -- After Blizzard sets color (reaction/class), override with threat color
-        hooksecurefunc(healthBar, "SetStatusBarColor", function(self)
-            if settingColor[self] then return end
+        hooksecurefunc(healthBar, "SetValue", function(self, val)
+            local c = customHealthBars[self]
+            if c then c:SetValue(val) end
+        end)
+
+        -- Capture Blizzard's color; apply reaction color or threat override
+        hooksecurefunc(healthBar, "SetStatusBarColor", function(self, r, g, b)
+            blizzardHealthColors[self] = { r, g, b }
+            local c = customHealthBars[self]
+            if not c then return end
             local color = threatOverrides[unitFrame]
             if color then
-                settingColor[self] = true
-                self:SetStatusBarColor(color[1], color[2], color[3])
-                settingColor[self] = nil
+                c:SetStatusBarColor(color[1], color[2], color[3])
+            else
+                c:SetStatusBarColor(r, g, b)
             end
         end)
-    end
 
-    CreateBarBackdrop(healthBar)
+        -- Keep Blizzard's fill invisible on texture changes
+        hooksecurefunc(healthBar, "SetStatusBarTexture", function(self)
+            local tex = self:GetStatusBarTexture()
+            if tex then tex:SetAlpha(0) end
+        end)
+    end
 end
 
 local function SkinCastBar(unitFrame)
     local castBar = unitFrame.castBar
     if not castBar then return end
 
-    SE:SkinStatusBar(castBar)
-
-    -- Alpha-zero border textures, preserve fill and icon
-    local fillTex = castBar:GetStatusBarTexture()
+    -- Alpha-zero ALL regions on Blizzard's cast bar
     for i = 1, castBar:GetNumRegions() do
         local region = select(i, castBar:GetRegions())
-        if region and region:GetObjectType() == "Texture"
-           and region ~= fillTex
-           and region ~= castBar.Icon then
-            region:SetAlpha(0)
-        end
+        if region then region:SetAlpha(0) end
     end
+    if castBar.BorderShield then castBar.BorderShield:SetAlpha(0) end
+    if castBar.Text then castBar.Text:SetAlpha(0) end
 
-    if castBar.BorderShield then
-        castBar.BorderShield:SetAlpha(0)
-    end
-
-    if not hookedBars[castBar] then
-        hookedBars[castBar] = true
-
-        local lastR, lastG, lastB = 1, 0.7, 0
-
-        -- Capture Blizzard's color; guard prevents our overrides from polluting
-        hooksecurefunc(castBar, "SetStatusBarColor", function(self, r, g, b)
-            if settingColor[self] then return end
-            lastR, lastG, lastB = r, g, b
-            if nonInterruptible[self] then
-                settingColor[self] = true
-                self:SetStatusBarColor(0.7, 0.7, 0.7)
-                settingColor[self] = nil
-            end
-        end)
-
-        -- Enforce flat texture, replay color (or grey override)
-        hooksecurefunc(castBar, "SetStatusBarTexture", function(self)
-            if settingTexture[self] then return end
-            local tex = self:GetStatusBarTexture()
-            if tex and tex:GetTexture() ~= C.BAR_TEXTURE then
-                settingTexture[self] = true
-                self:SetStatusBarTexture(C.BAR_TEXTURE)
-                settingColor[self] = true
-                if nonInterruptible[self] then
-                    self:SetStatusBarColor(0.7, 0.7, 0.7)
-                else
-                    self:SetStatusBarColor(lastR, lastG, lastB)
-                end
-                settingColor[self] = nil
-                settingTexture[self] = nil
-            end
-        end)
-
-        -- Detect interruptibility via BorderShield visibility
-        if castBar.BorderShield then
-            hooksecurefunc(castBar.BorderShield, "Show", function()
-                nonInterruptible[castBar] = true
-                settingColor[castBar] = true
-                castBar:SetStatusBarColor(0.7, 0.7, 0.7)
-                settingColor[castBar] = nil
-            end)
-            hooksecurefunc(castBar.BorderShield, "Hide", function()
-                nonInterruptible[castBar] = false
-                settingColor[castBar] = true
-                castBar:SetStatusBarColor(lastR, lastG, lastB)
-                settingColor[castBar] = nil
-            end)
-        end
-    end
-
-    -- Match cast bar dimensions to health bar (size only, no re-anchoring)
+    -- Size castBar to match healthBar
     local healthBar = unitFrame.healthBar
     if healthBar then
         castBar:SetSize(healthBar:GetWidth(), healthBar:GetHeight())
     end
 
-    -- Crop icon border
-    if castBar.Icon then
-        castBar.Icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
-    end
+    if not hookedBars[castBar] then
+        hookedBars[castBar] = true
 
-    CreateBarBackdrop(castBar)
+        local barHeight = castBar:GetHeight()
+        local iconSize = barHeight
+        local iconGap = 2
+
+        -- Our own StatusBar, child of Blizzard's castBar (inherits show/hide)
+        local bar = CreateFrame("StatusBar", nil, castBar)
+        bar:SetStatusBarTexture(C.BAR_TEXTURE)
+        bar:SetPoint("TOPLEFT", castBar, "TOPLEFT", iconSize + iconGap, 0)
+        bar:SetPoint("BOTTOMRIGHT", castBar, "BOTTOMRIGHT", 0, 0)
+        bar:SetFrameLevel(castBar:GetFrameLevel() + 2)
+
+        -- Backdrop
+        local bg = bar:CreateTexture(nil, "BACKGROUND")
+        bg:SetAllPoints()
+        bg:SetColorTexture(C.BACKDROP_COLOR[1], C.BACKDROP_COLOR[2],
+                           C.BACKDROP_COLOR[3], C.BACKDROP_COLOR[4])
+
+        -- Spell icon (square, left of bar)
+        local icon = bar:CreateTexture(nil, "ARTWORK")
+        icon:SetSize(iconSize, iconSize)
+        icon:SetPoint("TOPRIGHT", bar, "TOPLEFT", -iconGap, 0)
+        icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+
+        -- Icon backdrop
+        local iconBg = bar:CreateTexture(nil, "BACKGROUND")
+        iconBg:SetPoint("TOPLEFT", icon, "TOPLEFT")
+        iconBg:SetPoint("BOTTOMRIGHT", icon, "BOTTOMRIGHT")
+        iconBg:SetColorTexture(C.BACKDROP_COLOR[1], C.BACKDROP_COLOR[2],
+                               C.BACKDROP_COLOR[3], C.BACKDROP_COLOR[4])
+
+        -- Spell name text
+        local text = bar:CreateFontString(nil, "OVERLAY")
+        text:SetPoint("LEFT", bar, "LEFT", 4, 0)
+        text:SetPoint("RIGHT", bar, "RIGHT", -4, 0)
+        text:SetJustifyH("CENTER")
+        text:SetWordWrap(false)
+        StyleFontString(text)
+
+        customCastBars[castBar] = { bar = bar, icon = icon, text = text }
+
+        -- Mirror progress
+        hooksecurefunc(castBar, "SetMinMaxValues", function(self, min, max)
+            local c = customCastBars[self]
+            if c then c.bar:SetMinMaxValues(min, max) end
+        end)
+        hooksecurefunc(castBar, "SetValue", function(self, val)
+            local c = customCastBars[self]
+            if c then c.bar:SetValue(val) end
+        end)
+
+        -- Keep Blizzard's fill invisible on texture changes
+        hooksecurefunc(castBar, "SetStatusBarTexture", function(self)
+            local tex = self:GetStatusBarTexture()
+            if tex then tex:SetAlpha(0) end
+        end)
+    end
 end
 
 local function CleanupChrome(unitFrame)
@@ -219,24 +259,13 @@ local function CleanupChrome(unitFrame)
     end
 end
 
-local NAMEPLATE_FONT_SIZE = C.FONT_SIZE + 2
-
-local function StyleFontString(fs)
-    if not fs or not fs.SetFont then return end
-    SE:StyleFont(fs, NAMEPLATE_FONT_SIZE, "")
-    fs:SetShadowOffset(1, -1)
-    fs:SetShadowColor(0, 0, 0, 1)
-end
-
 local function CreateNameOverlay(unitFrame)
-    if not unitFrame.healthBar then return end
+    local custom = customHealthBars[unitFrame.healthBar]
+    if not custom then return end
 
-    -- Create our own FontString on the health bar (like Plater does)
-    -- This avoids taint from repositioning Blizzard's unitFrame.name
-    local overlay = unitFrame.healthBar:CreateFontString(nil, "OVERLAY")
-    -- Two-point anchor so width is derived from layout, not GetWidth() (which returns secret values)
-    overlay:SetPoint("LEFT", unitFrame.healthBar, "LEFT", 4, 0)
-    overlay:SetPoint("RIGHT", unitFrame.healthBar, "RIGHT", -4, 0)
+    local overlay = custom:CreateFontString(nil, "OVERLAY")
+    overlay:SetPoint("LEFT", custom, "LEFT", 4, 0)
+    overlay:SetPoint("RIGHT", custom, "RIGHT", -4, 0)
     overlay:SetJustifyH("CENTER")
     overlay:SetWordWrap(false)
     StyleFontString(overlay)
@@ -259,9 +288,6 @@ end
 
 local function StyleAllText(unitFrame)
     CreateNameOverlay(unitFrame)
-    if unitFrame.castBar then
-        StyleFontString(unitFrame.castBar.Text)
-    end
     -- Level text if present
     if unitFrame.LevelFrame then
         StyleFontString(unitFrame.LevelFrame.LevelText)
@@ -275,10 +301,11 @@ local function StyleAllText(unitFrame)
 end
 
 local function CreateFocusOverlay(unitFrame)
-    if not unitFrame.healthBar or focusOverlays[unitFrame] then return end
+    local custom = customHealthBars[unitFrame.healthBar]
+    if not custom or focusOverlays[unitFrame] then return end
 
-    local overlay = unitFrame.healthBar:CreateTexture(nil, "OVERLAY")
-    overlay:SetAllPoints(unitFrame.healthBar)
+    local overlay = custom:CreateTexture(nil, "OVERLAY")
+    overlay:SetAllPoints(custom)
     overlay:SetTexture("Interface\\AddOns\\PadleyUI\\Textures\\DiagonalStripes", "REPEAT", "REPEAT")
     overlay:SetHorizTile(true)
     overlay:SetVertTile(true)
@@ -314,9 +341,9 @@ local ARROW_COLOR     = { 1, 1, 1, 1 }
 local ARROW_TEXTURE   = "Interface\\AddOns\\PadleyUI\\Textures\\TargetArrow.png"
 
 local function CreateTargetArrows(unitFrame)
-    if not unitFrame.healthBar or targetArrows[unitFrame] then return end
+    local custom = customHealthBars[unitFrame.healthBar]
+    if not custom or targetArrows[unitFrame] then return end
 
-    local hb = unitFrame.healthBar
     local nameplate = unitFrame:GetParent()
 
     local arrowH = 24
@@ -325,9 +352,9 @@ local function CreateTargetArrows(unitFrame)
     -- Left chevron ">" pointing right — left half of texture
     local leftFrame = CreateFrame("Frame", nil, nameplate)
     leftFrame:SetFrameStrata("MEDIUM")
-    leftFrame:SetFrameLevel(hb:GetFrameLevel() + 2)
+    leftFrame:SetFrameLevel(custom:GetFrameLevel() + 1)
     leftFrame:SetSize(arrowW, arrowH)
-    leftFrame:SetPoint("RIGHT", hb, "LEFT", -ARROW_PAD, 0)
+    leftFrame:SetPoint("RIGHT", custom, "LEFT", -ARROW_PAD, 0)
     local leftTex = leftFrame:CreateTexture(nil, "ARTWORK")
     leftTex:SetAllPoints()
     leftTex:SetTexture(ARROW_TEXTURE)
@@ -338,9 +365,9 @@ local function CreateTargetArrows(unitFrame)
     -- Right chevron "<" pointing left — right half of texture
     local rightFrame = CreateFrame("Frame", nil, nameplate)
     rightFrame:SetFrameStrata("MEDIUM")
-    rightFrame:SetFrameLevel(hb:GetFrameLevel() + 2)
+    rightFrame:SetFrameLevel(custom:GetFrameLevel() + 1)
     rightFrame:SetSize(arrowW, arrowH)
-    rightFrame:SetPoint("LEFT", hb, "RIGHT", ARROW_PAD, 0)
+    rightFrame:SetPoint("LEFT", custom, "RIGHT", ARROW_PAD, 0)
     local rightTex = rightFrame:CreateTexture(nil, "ARTWORK")
     rightTex:SetAllPoints()
     rightTex:SetTexture(ARROW_TEXTURE)
@@ -403,10 +430,11 @@ local function GetQuestProgressForUnit(unit)
 end
 
 local function CreateQuestIndicator(unitFrame)
-    if not unitFrame.healthBar or questIndicators[unitFrame] then return end
+    local custom = customHealthBars[unitFrame.healthBar]
+    if not custom or questIndicators[unitFrame] then return end
 
-    local text = unitFrame.healthBar:CreateFontString(nil, "OVERLAY")
-    text:SetPoint("LEFT", unitFrame.healthBar, "RIGHT", 4, 0)
+    local text = custom:CreateFontString(nil, "OVERLAY")
+    text:SetPoint("LEFT", custom, "RIGHT", 4, 0)
     StyleFontString(text)
     text:SetTextColor(1, 0.82, 0)
     text:Hide()
@@ -437,16 +465,16 @@ local function UpdateQuestIndicator(unitFrame)
 end
 
 local function CreateHoverBorder(unitFrame)
-    if not unitFrame.healthBar or hoverBorders[unitFrame] then return end
+    local custom = customHealthBars[unitFrame.healthBar]
+    if not custom or hoverBorders[unitFrame] then return end
 
-    local hb = unitFrame.healthBar
     local plate = unitFrame:GetParent()
 
     local border = CreateFrame("Frame", nil, plate, "BackdropTemplate")
     border:EnableMouse(false)
-    border:SetFrameLevel(hb:GetFrameLevel() + 1)
-    border:SetPoint("TOPLEFT", hb, "TOPLEFT", -2, 2)
-    border:SetPoint("BOTTOMRIGHT", hb, "BOTTOMRIGHT", 2, -2)
+    border:SetFrameLevel(custom:GetFrameLevel() + 1)
+    border:SetPoint("TOPLEFT", custom, "TOPLEFT", -2, 2)
+    border:SetPoint("BOTTOMRIGHT", custom, "BOTTOMRIGHT", 2, -2)
     border:SetBackdrop({ edgeFile = "Interface\\Buttons\\WHITE8x8", edgeSize = 2 })
     border:SetBackdropBorderColor(1, 1, 1, 1)
     border:Hide()
@@ -502,10 +530,17 @@ local function SkinNamePlate(unitFrame)
 end
 
 local function RefreshNamePlate(unitFrame)
-    if unitFrame.healthBar then
-        EnforceFlatTexture(unitFrame.healthBar)
+    -- Sync initial health bar state (needed when nameplate appears with existing unit)
+    local customHB = customHealthBars[unitFrame.healthBar]
+    if customHB and unitFrame.healthBar then
+        local min, max = unitFrame.healthBar:GetMinMaxValues()
+        customHB:SetMinMaxValues(min, max)
+        customHB:SetValue(unitFrame.healthBar:GetValue())
+        local r, g, b = unitFrame.healthBar:GetStatusBarColor()
+        blizzardHealthColors[unitFrame.healthBar] = { r, g, b }
     end
     UpdateThreatColor(unitFrame)
+    UpdateCastBarInterruptColor(unitFrame)
     -- Keep Blizzard's name hidden, sync text to our overlay
     if unitFrame.name then
         unitFrame.name:SetAlpha(0)
@@ -529,6 +564,10 @@ function NameplateSkin:Apply()
     eventFrame:RegisterEvent("PLAYER_TARGET_CHANGED")
     eventFrame:RegisterEvent("QUEST_LOG_UPDATE")
     eventFrame:RegisterEvent("UPDATE_MOUSEOVER_UNIT")
+    eventFrame:RegisterEvent("UNIT_SPELLCAST_START")
+    eventFrame:RegisterEvent("UNIT_SPELLCAST_CHANNEL_START")
+    eventFrame:RegisterEvent("UNIT_SPELLCAST_INTERRUPTIBLE")
+    eventFrame:RegisterEvent("UNIT_SPELLCAST_NOT_INTERRUPTIBLE")
     eventFrame:SetScript("OnEvent", function(self, event, ...)
         if event == "NAME_PLATE_CREATED" then
             local plate = ...
@@ -563,6 +602,30 @@ function NameplateSkin:Apply()
             end
         elseif event == "UPDATE_MOUSEOVER_UNIT" then
             RefreshAllHoverBorders()
+        elseif event == "UNIT_SPELLCAST_START"
+            or event == "UNIT_SPELLCAST_CHANNEL_START" then
+            local unitId = ...
+            local plate = C_NamePlate.GetNamePlateForUnit(unitId)
+            if plate and plate.UnitFrame and skinnedFrames[plate.UnitFrame] then
+                UpdateCastBarInterruptColor(plate.UnitFrame)
+            end
+        elseif event == "UNIT_SPELLCAST_INTERRUPTIBLE"
+            or event == "UNIT_SPELLCAST_NOT_INTERRUPTIBLE" then
+            -- Event name tells us the state directly; no API query needed
+            local unitId = ...
+            local plate = C_NamePlate.GetNamePlateForUnit(unitId)
+            if plate and plate.UnitFrame and skinnedFrames[plate.UnitFrame] then
+                local custom = customCastBars[plate.UnitFrame.castBar]
+                if custom then
+                    local r, g, b
+                    if event == "UNIT_SPELLCAST_NOT_INTERRUPTIBLE" then
+                        r, g, b = 0.7, 0.7, 0.7
+                    else
+                        r, g, b = 1, 0.7, 0
+                    end
+                    custom.bar:GetStatusBarTexture():SetVertexColor(r, g, b)
+                end
+            end
         end
     end)
 
