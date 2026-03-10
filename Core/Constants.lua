@@ -17,7 +17,7 @@ ns.C = {
     HIGHLIGHT_COLOR = { 0.4, 0.4, 0.4, 1 },
 
     -- Fonts
-    FONT = "Fonts\\FRIZQT__.TTF",
+    FONT = "Interface\\AddOns\\PadleyUI\\Fonts\\Expressway.ttf",
     FONT_SIZE = 11,
     FONT_FLAGS = "OUTLINE",
 
