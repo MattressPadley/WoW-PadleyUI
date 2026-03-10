@@ -13,6 +13,7 @@ local NUM_TICKS = 19  -- 20 segments = 19 dividers
 
 -- Default bar color (matches Blizzard XP bar blue)
 local XP_BAR_COLOR = { 0.0, 0.39, 0.88, 1 }
+local RESTED_XP_BAR_COLOR = { 0.0, 0.39, 0.88, 0.35 }
 
 ---------------------------------------------------------------------------
 -- Find the StatusBar child of a bar slot frame (by object type, not key)
@@ -107,6 +108,65 @@ local function FlattenStatusBar(statusBar)
 end
 
 ---------------------------------------------------------------------------
+-- Rested XP overlay texture on an XP StatusBar
+---------------------------------------------------------------------------
+
+local function CreateRestedOverlay(statusBar)
+    local overlay = statusBar:CreateTexture(nil, "ARTWORK", nil, -1)
+    overlay:SetTexture(C.BAR_TEXTURE)
+    overlay:SetVertexColor(RESTED_XP_BAR_COLOR[1], RESTED_XP_BAR_COLOR[2], RESTED_XP_BAR_COLOR[3], RESTED_XP_BAR_COLOR[4])
+    overlay:Hide()
+
+    local function UpdateRested()
+        local exhaustion = GetXPExhaustion()
+        if not exhaustion or exhaustion <= 0 then
+            overlay:Hide()
+            return
+        end
+
+        local currXP = UnitXP("player")
+        local maxXP = UnitXPMax("player")
+        if not maxXP or maxXP <= 0 then
+            overlay:Hide()
+            return
+        end
+
+        -- Only show on the XP bar (verify bar values match player XP)
+        local barVal = statusBar:GetValue()
+        local _, barMax = statusBar:GetMinMaxValues()
+        if barMax ~= maxXP or barVal ~= currXP then
+            overlay:Hide()
+            return
+        end
+
+        local barWidth = statusBar:GetWidth()
+        if not barWidth or barWidth <= 0 then
+            overlay:Hide()
+            return
+        end
+
+        local startFrac = currXP / maxXP
+        local endFrac = math.min((currXP + exhaustion) / maxXP, 1.0)
+
+        overlay:ClearAllPoints()
+        overlay:SetPoint("TOPLEFT", statusBar, "TOPLEFT", barWidth * startFrac, 0)
+        overlay:SetPoint("BOTTOMRIGHT", statusBar, "BOTTOMLEFT", barWidth * endFrac, 0)
+        overlay:Show()
+    end
+
+    local eventFrame = CreateFrame("Frame")
+    eventFrame:RegisterEvent("PLAYER_XP_UPDATE")
+    eventFrame:RegisterEvent("UPDATE_EXHAUSTION")
+    eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
+    eventFrame:RegisterEvent("PLAYER_LEVEL_UP")
+    eventFrame:SetScript("OnEvent", UpdateRested)
+
+    statusBar:HookScript("OnSizeChanged", UpdateRested)
+
+    C_Timer.After(0, UpdateRested)
+end
+
+---------------------------------------------------------------------------
 -- Individual tracking bar slot skinning
 ---------------------------------------------------------------------------
 
@@ -151,6 +211,9 @@ local function SkinBarSlot(slot)
 
     -- Force flat texture on the StatusBar
     FlattenStatusBar(statusBar)
+
+    -- Rested XP overlay (only visible when this bar is the XP bar)
+    CreateRestedOverlay(statusBar)
 
     -- Child backdrop frame (avoids Mixin on Blizzard frames)
     local bdFrame = CreateFrame("Frame", nil, slot, "BackdropTemplate")
