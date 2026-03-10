@@ -234,9 +234,10 @@ local function CreateNameOverlay(unitFrame)
     -- Create our own FontString on the health bar (like Plater does)
     -- This avoids taint from repositioning Blizzard's unitFrame.name
     local overlay = unitFrame.healthBar:CreateFontString(nil, "OVERLAY")
-    overlay:SetPoint("CENTER", unitFrame.healthBar, "CENTER", 0, 0)
+    -- Two-point anchor so width is derived from layout, not GetWidth() (which returns secret values)
+    overlay:SetPoint("LEFT", unitFrame.healthBar, "LEFT", 4, 0)
+    overlay:SetPoint("RIGHT", unitFrame.healthBar, "RIGHT", -4, 0)
     overlay:SetJustifyH("CENTER")
-    overlay:SetWidth(unitFrame.healthBar:GetWidth() - 8)
     overlay:SetWordWrap(false)
     StyleFontString(overlay)
 
@@ -253,18 +254,7 @@ local function SyncNameText(unitFrame)
     if not overlay then return end
     if not unitFrame.name then return end
 
-    local fullName = unitFrame.name:GetText() or ""
-    overlay:SetText(fullName)
-
-    -- Truncate with ellipsis if the name overflows the health bar
-    local maxWidth = unitFrame.healthBar:GetWidth() - 8
-    if overlay:GetStringWidth() > maxWidth and #fullName > 0 then
-        local name = fullName
-        while #name > 0 and overlay:GetStringWidth() > maxWidth do
-            name = name:sub(1, #name - 1)
-            overlay:SetText(name .. "...")
-        end
-    end
+    overlay:SetText(unitFrame.name:GetText() or "")
 end
 
 local function StyleAllText(unitFrame)
