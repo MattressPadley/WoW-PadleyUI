@@ -11,6 +11,7 @@ local skinnedFrames = {}
 local hookedBars = {}
 local nameOverlays = {}  -- keyed by UnitFrame → our custom FontString
 local focusOverlays = {} -- keyed by UnitFrame → diagonal stripe Texture
+local targetArrows = {}  -- keyed by UnitFrame → { left, right }
 local questIndicators = {} -- keyed by UnitFrame → FontString
 
 -- Guard against recursive SetStatusBarTexture / SetStatusBarColor hook calls
@@ -234,6 +235,8 @@ local function CreateNameOverlay(unitFrame)
     local overlay = unitFrame.healthBar:CreateFontString(nil, "OVERLAY")
     overlay:SetPoint("CENTER", unitFrame.healthBar, "CENTER", 0, 0)
     overlay:SetJustifyH("CENTER")
+    overlay:SetWidth(unitFrame.healthBar:GetWidth() - 8)
+    overlay:SetWordWrap(false)
     StyleFontString(overlay)
 
     nameOverlays[unitFrame] = overlay
@@ -247,10 +250,19 @@ end
 local function SyncNameText(unitFrame)
     local overlay = nameOverlays[unitFrame]
     if not overlay then return end
+    if not unitFrame.name then return end
 
-    -- Copy text from Blizzard's name FontString to our overlay
-    if unitFrame.name then
-        overlay:SetText(unitFrame.name:GetText() or "")
+    local fullName = unitFrame.name:GetText() or ""
+    overlay:SetText(fullName)
+
+    -- Truncate with ellipsis if the name overflows the health bar
+    local maxWidth = unitFrame.healthBar:GetWidth() - 8
+    if overlay:GetStringWidth() > maxWidth and #fullName > 0 then
+        local name = fullName
+        while #name > 0 and overlay:GetStringWidth() > maxWidth do
+            name = name:sub(1, #name - 1)
+            overlay:SetText(name .. "...")
+        end
     end
 end
 
@@ -301,6 +313,68 @@ local function RefreshAllFocusOverlays()
     for _, plate in pairs(C_NamePlate.GetNamePlates()) do
         if plate.UnitFrame and skinnedFrames[plate.UnitFrame] then
             UpdateFocusOverlay(plate.UnitFrame)
+        end
+    end
+end
+
+-- Target arrow indicators (two chevrons pointing inward at the health bar)
+local ARROW_PAD       = 4   -- gap between arrow tip and health bar edge
+local ARROW_COLOR     = { 1, 1, 1, 1 }
+local ARROW_TEXTURE   = "Interface\\AddOns\\PadleyUI\\Textures\\TargetArrow.png"
+
+local function CreateTargetArrows(unitFrame)
+    if not unitFrame.healthBar or targetArrows[unitFrame] then return end
+
+    local hb = unitFrame.healthBar
+    local nameplate = unitFrame:GetParent()
+
+    local arrowH = 24
+    local arrowW = 12
+
+    -- Left chevron ">" pointing right — left half of texture
+    local leftFrame = CreateFrame("Frame", nil, nameplate)
+    leftFrame:SetFrameStrata("MEDIUM")
+    leftFrame:SetFrameLevel(hb:GetFrameLevel() + 2)
+    leftFrame:SetSize(arrowW, arrowH)
+    leftFrame:SetPoint("RIGHT", hb, "LEFT", -ARROW_PAD, 0)
+    local leftTex = leftFrame:CreateTexture(nil, "ARTWORK")
+    leftTex:SetAllPoints()
+    leftTex:SetTexture(ARROW_TEXTURE)
+    leftTex:SetTexCoord(0, 0.5, 0, 1)
+    leftTex:SetVertexColor(ARROW_COLOR[1], ARROW_COLOR[2], ARROW_COLOR[3], ARROW_COLOR[4])
+    leftFrame:Hide()
+
+    -- Right chevron "<" pointing left — right half of texture
+    local rightFrame = CreateFrame("Frame", nil, nameplate)
+    rightFrame:SetFrameStrata("MEDIUM")
+    rightFrame:SetFrameLevel(hb:GetFrameLevel() + 2)
+    rightFrame:SetSize(arrowW, arrowH)
+    rightFrame:SetPoint("LEFT", hb, "RIGHT", ARROW_PAD, 0)
+    local rightTex = rightFrame:CreateTexture(nil, "ARTWORK")
+    rightTex:SetAllPoints()
+    rightTex:SetTexture(ARROW_TEXTURE)
+    rightTex:SetTexCoord(0.5, 1, 0, 1)
+    rightTex:SetVertexColor(ARROW_COLOR[1], ARROW_COLOR[2], ARROW_COLOR[3], ARROW_COLOR[4])
+    rightFrame:Hide()
+
+    targetArrows[unitFrame] = { leftFrame, rightFrame }
+end
+
+local function UpdateTargetArrows(unitFrame)
+    local arrows = targetArrows[unitFrame]
+    if not arrows then return end
+
+    local unit = unitFrame.unit
+    local show = unit and UnitExists("target") and UnitIsUnit(unit, "target")
+    for _, tex in ipairs(arrows) do
+        if show then tex:Show() else tex:Hide() end
+    end
+end
+
+local function RefreshAllTargetArrows()
+    for _, plate in pairs(C_NamePlate.GetNamePlates()) do
+        if plate.UnitFrame and skinnedFrames[plate.UnitFrame] then
+            UpdateTargetArrows(plate.UnitFrame)
         end
     end
 end
@@ -380,6 +454,7 @@ local function SkinNamePlate(unitFrame)
     CleanupChrome(unitFrame)
     StyleAllText(unitFrame)
     CreateFocusOverlay(unitFrame)
+    CreateTargetArrows(unitFrame)
     CreateQuestIndicator(unitFrame)
 end
 
@@ -394,6 +469,7 @@ local function RefreshNamePlate(unitFrame)
     end
     SyncNameText(unitFrame)
     UpdateFocusOverlay(unitFrame)
+    UpdateTargetArrows(unitFrame)
     UpdateQuestIndicator(unitFrame)
 end
 
@@ -407,6 +483,7 @@ function NameplateSkin:Apply()
     eventFrame:RegisterEvent("UNIT_THREAT_LIST_UPDATE")
     eventFrame:RegisterEvent("UNIT_THREAT_SITUATION_UPDATE")
     eventFrame:RegisterEvent("PLAYER_FOCUS_CHANGED")
+    eventFrame:RegisterEvent("PLAYER_TARGET_CHANGED")
     eventFrame:RegisterEvent("QUEST_LOG_UPDATE")
     eventFrame:SetScript("OnEvent", function(self, event, ...)
         if event == "NAME_PLATE_CREATED" then
@@ -432,6 +509,8 @@ function NameplateSkin:Apply()
             end
         elseif event == "PLAYER_FOCUS_CHANGED" then
             RefreshAllFocusOverlays()
+        elseif event == "PLAYER_TARGET_CHANGED" then
+            RefreshAllTargetArrows()
         elseif event == "QUEST_LOG_UPDATE" then
             for _, plate in pairs(C_NamePlate.GetNamePlates()) do
                 if plate.UnitFrame and skinnedFrames[plate.UnitFrame] then
