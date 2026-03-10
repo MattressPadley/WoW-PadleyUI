@@ -12,6 +12,9 @@ local skinnedProgressBars = {}
 local hookedModules = {}
 local mainFrameSkinned = false
 
+-- Module-level backdrop references for collapse handling
+local bdFrame, bgPanel
+
 ---------------------------------------------------------------------------
 -- Main container backdrop (square, replaces Blizzard's clipped-corner bg)
 ---------------------------------------------------------------------------
@@ -47,11 +50,11 @@ local function SkinMainFrame(trackerFrame)
     HideBackgroundsRecursive(trackerFrame, 0)
 
     -- Child 2 is the content-sized background panel (has 9 border textures)
-    local bgPanel = select(2, trackerFrame:GetChildren())
+    bgPanel = select(2, trackerFrame:GetChildren())
     if not bgPanel then return end
 
     -- Parent to trackerFrame (avoids alpha inheritance) but anchor to bgPanel size
-    local bdFrame = CreateFrame("Frame", nil, trackerFrame, "BackdropTemplate")
+    bdFrame = CreateFrame("Frame", nil, trackerFrame, "BackdropTemplate")
     bdFrame:SetAllPoints(bgPanel)
     bdFrame:SetFrameLevel(math.max(bgPanel:GetFrameLevel() - 1, 0))
     bdFrame:SetBackdrop({ bgFile = C.FLAT_BACKDROP.bgFile })
@@ -97,49 +100,102 @@ end
 ---------------------------------------------------------------------------
 
 local skinnedMinimize = {}
+local alphaHooked = {}
+
+-- Persistently keep a texture region at alpha 0
+local function PersistHideTexture(tex)
+    if not tex or alphaHooked[tex] then return end
+    alphaHooked[tex] = true
+    tex:SetAlpha(0)
+    hooksecurefunc(tex, "SetAlpha", function(self)
+        if self:GetAlpha() ~= 0 then self:SetAlpha(0) end
+    end)
+end
+
+-- Hide all button-specific textures (Normal, Highlight, Pushed)
+local function SuppressButtonTextures(btn)
+    for _, getter in pairs({"GetNormalTexture", "GetHighlightTexture", "GetPushedTexture"}) do
+        if btn[getter] then
+            local tex = btn[getter](btn)
+            if tex then PersistHideTexture(tex) end
+        end
+    end
+end
 
 local function SkinMinimizeButton(button)
     if not button or skinnedMinimize[button] then return end
     skinnedMinimize[button] = true
 
-    -- Strip default textures
-    SE:StripTextures(button)
-    if button.SetNormalTexture then button:SetNormalTexture("") end
-    if button.SetHighlightTexture then button:SetHighlightTexture("") end
-    if button.SetPushedTexture then button:SetPushedTexture("") end
+    -- Kill all region textures permanently
+    SE:StripTextures(button, true)
+
+    -- Hide button-specific textures and persist via alpha hook
+    SuppressButtonTextures(button)
+
+    -- Re-suppress whenever Blizzard sets new textures or atlases
+    for _, method in pairs({"SetNormalTexture", "SetHighlightTexture", "SetPushedTexture"}) do
+        if button[method] then
+            hooksecurefunc(button, method, SuppressButtonTextures)
+        end
+    end
+    for _, method in pairs({"SetNormalAtlas", "SetHighlightAtlas", "SetPushedAtlas"}) do
+        if button[method] then
+            hooksecurefunc(button, method, SuppressButtonTextures)
+        end
+    end
 
     -- Child backdrop
-    local bdFrame = CreateFrame("Frame", nil, button, "BackdropTemplate")
-    bdFrame:SetAllPoints()
-    bdFrame:SetFrameLevel(button:GetFrameLevel())
-    bdFrame:SetBackdrop({ bgFile = C.FLAT_BACKDROP.bgFile })
-    bdFrame:SetBackdropColor(C.HEADER_COLOR[1], C.HEADER_COLOR[2], C.HEADER_COLOR[3], C.HEADER_COLOR[4])
-    bdFrame:EnableMouse(false)
+    local btnBd = CreateFrame("Frame", nil, button, "BackdropTemplate")
+    btnBd:SetAllPoints()
+    btnBd:SetFrameLevel(button:GetFrameLevel())
+    btnBd:SetBackdrop({ bgFile = C.FLAT_BACKDROP.bgFile })
+    btnBd:SetBackdropColor(C.HEADER_COLOR[1], C.HEADER_COLOR[2], C.HEADER_COLOR[3], C.HEADER_COLOR[4])
+    btnBd:EnableMouse(false)
 
     -- Indicator text
-    local indicator = bdFrame:CreateFontString(nil, "OVERLAY")
+    local indicator = btnBd:CreateFontString(nil, "OVERLAY")
     indicator:SetFont(C.FONT, 10, C.FONT_FLAGS)
     indicator:SetPoint("CENTER", 0, 0)
     indicator:SetText("-")
 
     -- Hover highlight
     button:HookScript("OnEnter", function()
-        bdFrame:SetBackdropColor(C.HIGHLIGHT_COLOR[1], C.HIGHLIGHT_COLOR[2], C.HIGHLIGHT_COLOR[3], C.HIGHLIGHT_COLOR[4])
+        btnBd:SetBackdropColor(C.HIGHLIGHT_COLOR[1], C.HIGHLIGHT_COLOR[2], C.HIGHLIGHT_COLOR[3], C.HIGHLIGHT_COLOR[4])
     end)
     button:HookScript("OnLeave", function()
-        bdFrame:SetBackdropColor(C.HEADER_COLOR[1], C.HEADER_COLOR[2], C.HEADER_COLOR[3], C.HEADER_COLOR[4])
+        btnBd:SetBackdropColor(C.HEADER_COLOR[1], C.HEADER_COLOR[2], C.HEADER_COLOR[3], C.HEADER_COLOR[4])
     end)
 
-    -- Update indicator when collapsed/expanded
-    if button.SetNormalAtlas then
-        hooksecurefunc(button, "SetNormalAtlas", function(_, atlas)
-            if atlas and atlas:find("Minimize") then
-                indicator:SetText("-")
-            else
-                indicator:SetText("+")
+    -- Update indicator and backdrop on collapse/expand
+    local function UpdateCollapseState()
+        local trackerFrame = ObjectiveTrackerFrame
+        if not trackerFrame then return end
+
+        -- Detect collapsed state: check isCollapsed property or if content is hidden
+        local collapsed = trackerFrame.isCollapsed
+        if collapsed == nil and bgPanel then
+            collapsed = not bgPanel:IsShown() or bgPanel:GetHeight() < 2
+        end
+
+        indicator:SetText(collapsed and "+" or "-")
+
+        if bdFrame then
+            bdFrame:ClearAllPoints()
+            if collapsed and trackerFrame.Header then
+                bdFrame:SetAllPoints(trackerFrame.Header)
+            elseif bgPanel then
+                bdFrame:SetAllPoints(bgPanel)
             end
-        end)
+        end
     end
+
+    -- Hook OnClick to catch collapse toggle (fires for both button click and :Click())
+    button:HookScript("OnClick", function()
+        C_Timer.After(0, UpdateCollapseState)
+    end)
+
+    -- Sync initial state after tracker has loaded
+    C_Timer.After(0.5, UpdateCollapseState)
 end
 
 ---------------------------------------------------------------------------

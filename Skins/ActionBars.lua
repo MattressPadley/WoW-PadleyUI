@@ -299,11 +299,9 @@ function PadleyUI_ToggleActionBarMouseover()
 end
 
 function PadleyUI_ToggleQuestTracker()
-    if not PadleyUI_DB then PadleyUI_DB = {} end
-    local hidden = not PadleyUI_DB.questTrackerHidden
-    PadleyUI_DB.questTrackerHidden = hidden
-    if ObjectiveTrackerFrame then
-        ObjectiveTrackerFrame:SetShown(not hidden)
+    local tracker = ObjectiveTrackerFrame
+    if tracker and tracker.Header and tracker.Header.MinimizeButton then
+        tracker.Header.MinimizeButton:Click()
     end
 end
 
@@ -335,8 +333,4 @@ function ActionBarSkin:Apply()
         SetMouseoverMode(mouseoverMode)
     end)
 
-    -- Restore saved quest tracker state
-    if PadleyUI_DB and PadleyUI_DB.questTrackerHidden and ObjectiveTrackerFrame then
-        ObjectiveTrackerFrame:SetShown(false)
-    end
 end
