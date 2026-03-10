@@ -13,6 +13,7 @@ local nameOverlays = {}  -- keyed by UnitFrame → our custom FontString
 local focusOverlays = {} -- keyed by UnitFrame → diagonal stripe Texture
 local targetArrows = {}  -- keyed by UnitFrame → { left, right }
 local questIndicators = {} -- keyed by UnitFrame → FontString
+local hoverBorders = {}   -- keyed by UnitFrame → backdrop Frame
 
 -- Guard against recursive SetStatusBarTexture / SetStatusBarColor hook calls
 local settingTexture = {}
@@ -445,6 +446,57 @@ local function UpdateQuestIndicator(unitFrame)
     end)
 end
 
+local function CreateHoverBorder(unitFrame)
+    if not unitFrame.healthBar or hoverBorders[unitFrame] then return end
+
+    local hb = unitFrame.healthBar
+    local plate = unitFrame:GetParent()
+
+    local border = CreateFrame("Frame", nil, plate, "BackdropTemplate")
+    border:EnableMouse(false)
+    border:SetFrameLevel(hb:GetFrameLevel() + 1)
+    border:SetPoint("TOPLEFT", hb, "TOPLEFT", -2, 2)
+    border:SetPoint("BOTTOMRIGHT", hb, "BOTTOMRIGHT", 2, -2)
+    border:SetBackdrop({ edgeFile = "Interface\\Buttons\\WHITE8x8", edgeSize = 2 })
+    border:SetBackdropBorderColor(1, 1, 1, 1)
+    border:Hide()
+
+    hoverBorders[unitFrame] = border
+end
+
+local function UpdateHoverBorder(unitFrame)
+    local border = hoverBorders[unitFrame]
+    if not border then return end
+
+    local unit = unitFrame.unit
+    if unit and UnitExists("mouseover") and UnitIsUnit(unit, "mouseover") then
+        border:Show()
+    else
+        border:Hide()
+    end
+end
+
+local mouseoverTicker = nil
+
+local function RefreshAllHoverBorders()
+    for _, plate in pairs(C_NamePlate.GetNamePlates()) do
+        if plate.UnitFrame and skinnedFrames[plate.UnitFrame] then
+            UpdateHoverBorder(plate.UnitFrame)
+        end
+    end
+
+    -- Start polling to detect when mouseover ends (no event fires for that)
+    if UnitExists("mouseover") and not mouseoverTicker then
+        mouseoverTicker = C_Timer.NewTicker(0.1, function()
+            if not UnitExists("mouseover") then
+                mouseoverTicker:Cancel()
+                mouseoverTicker = nil
+                RefreshAllHoverBorders()
+            end
+        end)
+    end
+end
+
 local function SkinNamePlate(unitFrame)
     if not unitFrame or skinnedFrames[unitFrame] then return end
     skinnedFrames[unitFrame] = true
@@ -456,6 +508,7 @@ local function SkinNamePlate(unitFrame)
     CreateFocusOverlay(unitFrame)
     CreateTargetArrows(unitFrame)
     CreateQuestIndicator(unitFrame)
+    CreateHoverBorder(unitFrame)
 end
 
 local function RefreshNamePlate(unitFrame)
@@ -485,6 +538,7 @@ function NameplateSkin:Apply()
     eventFrame:RegisterEvent("PLAYER_FOCUS_CHANGED")
     eventFrame:RegisterEvent("PLAYER_TARGET_CHANGED")
     eventFrame:RegisterEvent("QUEST_LOG_UPDATE")
+    eventFrame:RegisterEvent("UPDATE_MOUSEOVER_UNIT")
     eventFrame:SetScript("OnEvent", function(self, event, ...)
         if event == "NAME_PLATE_CREATED" then
             local plate = ...
@@ -517,6 +571,8 @@ function NameplateSkin:Apply()
                     UpdateQuestIndicator(plate.UnitFrame)
                 end
             end
+        elseif event == "UPDATE_MOUSEOVER_UNIT" then
+            RefreshAllHoverBorders()
         end
     end)
 
