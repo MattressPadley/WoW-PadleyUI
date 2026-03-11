@@ -69,7 +69,8 @@ local function UpdateThreatColor(unitFrame)
     end
 
     if not UnitAffectingCombat(unit) then
-        threatOverrides[unitFrame] = NOCOMBAT_COLOR
+        local reaction = UnitReaction(unit, "player")
+        threatOverrides[unitFrame] = (reaction and reaction < 4) and NOCOMBAT_COLOR or nil
     else
         threatOverrides[unitFrame] = GetThreatColor(unit)
     end
