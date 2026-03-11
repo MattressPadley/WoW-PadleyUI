@@ -14,6 +14,7 @@ local focusOverlays = {} -- keyed by UnitFrame → diagonal stripe Texture
 local targetArrows = {}  -- keyed by UnitFrame → { left, right }
 local questIndicators = {} -- keyed by UnitFrame → FontString
 local hoverBorders = {}   -- keyed by UnitFrame → backdrop Frame
+local kickOverlays = {}   -- keyed by UnitFrame → { frame, bar, icon, text, timer }
 
 -- Custom bars overlaid on Blizzard's (alpha-zeroed) bars
 local customHealthBars = {}   -- Blizzard healthBar → our StatusBar
@@ -35,6 +36,13 @@ local THREAT_TANK = {
     [2] = { 1.0, 1.0, 0.0 },             -- tanking insecure: yellow
     [3] = { 0.0, 1.0, 0.0 },             -- securely tanking: green (good for tanks)
 }
+
+-- Hidden tooltip for scanning quest objectives on nameplate units
+local scanTip = CreateFrame("GameTooltip", "PadleyUIScanTip", nil, "GameTooltipTemplate")
+scanTip:SetOwner(WorldFrame, "ANCHOR_NONE")
+
+local KICK_DISPLAY_DURATION = 2  -- seconds to show "Kicked: Name"
+local KICK_BAR_COLOR = { 0.7, 0.0, 0.0 }  -- dark red for interrupted bar
 
 local threatOverrides = {}  -- unitFrame → { r, g, b } or nil
 
@@ -181,16 +189,15 @@ local function SkinCastBar(unitFrame)
     if castBar.BorderShield then castBar.BorderShield:SetAlpha(0) end
     if castBar.Text then castBar.Text:SetAlpha(0) end
 
-    -- Size castBar to match healthBar
+    -- Never call castBar:SetSize() — taints dimensions, causing secret values
+    -- in BorderShield's Backdrop.lua when secure code queries GetSize()
     local healthBar = unitFrame.healthBar
-    if healthBar then
-        castBar:SetSize(healthBar:GetWidth(), healthBar:GetHeight())
-    end
 
     if not hookedBars[castBar] then
         hookedBars[castBar] = true
 
-        local barHeight = castBar:GetHeight()
+        local barHeight = healthBar and healthBar:GetHeight() or castBar:GetHeight()
+        local barWidth = healthBar and healthBar:GetWidth() or castBar:GetWidth()
         local iconSize = barHeight
         local iconGap = 2
 
@@ -198,7 +205,7 @@ local function SkinCastBar(unitFrame)
         local bar = CreateFrame("StatusBar", nil, castBar)
         bar:SetStatusBarTexture(C.BAR_TEXTURE)
         bar:SetPoint("TOPLEFT", castBar, "TOPLEFT", iconSize + iconGap, 0)
-        bar:SetPoint("BOTTOMRIGHT", castBar, "BOTTOMRIGHT", 0, 0)
+        bar:SetSize(barWidth - iconSize - iconGap, barHeight)
         bar:SetFrameLevel(castBar:GetFrameLevel() + 2)
 
         -- Backdrop
@@ -406,32 +413,37 @@ end
 local function GetQuestProgressForUnit(unit)
     if not unit or not UnitExists(unit) then return nil end
 
-    -- UnitName returns secret values for nameplate units in 12.0;
-    -- pcall to detect and bail out gracefully
-    local ok, unitName = pcall(UnitName, unit)
-    if not ok or not unitName then return nil end
+    -- Tooltip scanning: SetUnit populates the tooltip with exactly the quest
+    -- objectives relevant to this mob. No UnitName call needed (avoids taint).
+    scanTip:SetOwner(WorldFrame, "ANCHOR_NONE")
+    scanTip:SetUnit(unit)
 
-    -- Verify the name is usable (not a secret value)
-    local nameOk = pcall(string.len, unitName)
-    if not nameOk then return nil end
-
-    -- Scan quest log for objectives mentioning this unit
-    for i = 1, C_QuestLog.GetNumQuestLogEntries() do
-        local info = C_QuestLog.GetInfo(i)
-        if info and not info.isHeader and not info.isHidden then
-            local objectives = C_QuestLog.GetQuestObjectives(info.questID)
-            if objectives then
-                for _, obj in ipairs(objectives) do
-                    if not obj.finished and obj.text
-                        and obj.numRequired and obj.numRequired > 0
-                        and obj.text:find(unitName, 1, true) then
-                        return obj.numFulfilled .. "/" .. obj.numRequired
+    for i = 2, scanTip:NumLines() do
+        local line = _G["PadleyUIScanTipTextLeft" .. i]
+        if line then
+            local text = line:GetText()
+            if text then
+                -- Kill/collect quests: "3/5" pattern
+                local cur, req = text:match("(%d+)/(%d+)")
+                if cur and req then
+                    cur, req = tonumber(cur), tonumber(req)
+                    if cur < req then
+                        return cur .. "/" .. req
+                    end
+                end
+                -- Percentage quests: "45%" pattern
+                local pct = text:match("(%d+)%%")
+                if pct then
+                    pct = tonumber(pct)
+                    if pct < 100 then
+                        return pct .. "%"
                     end
                 end
             end
         end
     end
 
+    scanTip:Hide()
     return nil
 end
 
@@ -448,12 +460,25 @@ local function CreateQuestIndicator(unitFrame)
     questIndicators[unitFrame] = text
 end
 
+local function UpdateQuestIndicatorPosition(unitFrame)
+    local indicator = questIndicators[unitFrame]
+    if not indicator then return end
+    local custom = customHealthBars[unitFrame.healthBar]
+    if not custom then return end
+
+    local unit = unitFrame.unit
+    local offset = 4
+    if unit and UnitExists("target") and UnitIsUnit(unit, "target") then
+        offset = ARROW_PAD + 12 + 4  -- clear the target arrow
+    end
+    indicator:ClearAllPoints()
+    indicator:SetPoint("LEFT", custom, "RIGHT", offset, 0)
+end
+
 local function UpdateQuestIndicator(unitFrame)
     local indicator = questIndicators[unitFrame]
     if not indicator then return end
 
-    -- Defer to next frame to escape any tainted execution context
-    -- (UnitName returns secret values when called from hook chains)
     local unit = unitFrame.unit
     C_Timer.After(0, function()
         if not UnitExists(unit) then
@@ -464,6 +489,7 @@ local function UpdateQuestIndicator(unitFrame)
         if progress then
             indicator:SetText(progress)
             indicator:Show()
+            UpdateQuestIndicatorPosition(unitFrame)
         else
             indicator:Hide()
         end
@@ -521,6 +547,87 @@ local function RefreshAllHoverBorders()
     end
 end
 
+local function CreateKickOverlay(unitFrame)
+    local custom = customHealthBars[unitFrame.healthBar]
+    local castBar = unitFrame.castBar
+    if not custom or not castBar or kickOverlays[unitFrame] then return end
+
+    local plate = unitFrame:GetParent()
+
+    local healthBar = unitFrame.healthBar
+    local barHeight = healthBar and healthBar:GetHeight() or castBar:GetHeight()
+    local barWidth = healthBar and healthBar:GetWidth() or castBar:GetWidth()
+    local iconSize = barHeight
+    local iconGap = 2
+
+    -- Container frame parented to the nameplate (not castBar) so it stays visible
+    -- when Blizzard hides castBar on interrupt
+    local frame = CreateFrame("Frame", nil, plate)
+    frame:SetPoint("TOPLEFT", castBar, "TOPLEFT")
+    frame:SetSize(barWidth, barHeight)
+    frame:SetFrameLevel(castBar:GetFrameLevel() + 4)
+    frame:Hide()
+
+    -- Status bar (always full, dark red)
+    local bar = CreateFrame("StatusBar", nil, frame)
+    bar:SetStatusBarTexture(C.BAR_TEXTURE)
+    bar:SetPoint("TOPLEFT", frame, "TOPLEFT", iconSize + iconGap, 0)
+    bar:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", 0, 0)
+    bar:SetMinMaxValues(0, 1)
+    bar:SetValue(1)
+    bar:SetStatusBarColor(KICK_BAR_COLOR[1], KICK_BAR_COLOR[2], KICK_BAR_COLOR[3])
+
+    -- Backdrop
+    local bg = bar:CreateTexture(nil, "BACKGROUND")
+    bg:SetAllPoints()
+    bg:SetColorTexture(C.BACKDROP_COLOR[1], C.BACKDROP_COLOR[2],
+                       C.BACKDROP_COLOR[3], C.BACKDROP_COLOR[4])
+
+    -- Spell icon (square, left of bar)
+    local icon = bar:CreateTexture(nil, "ARTWORK")
+    icon:SetSize(iconSize, iconSize)
+    icon:SetPoint("TOPRIGHT", bar, "TOPLEFT", -iconGap, 0)
+    icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+
+    -- Icon backdrop
+    local iconBg = bar:CreateTexture(nil, "BACKGROUND")
+    iconBg:SetPoint("TOPLEFT", icon, "TOPLEFT")
+    iconBg:SetPoint("BOTTOMRIGHT", icon, "BOTTOMRIGHT")
+    iconBg:SetColorTexture(C.BACKDROP_COLOR[1], C.BACKDROP_COLOR[2],
+                           C.BACKDROP_COLOR[3], C.BACKDROP_COLOR[4])
+
+    -- "Kicked: Name" text
+    local text = bar:CreateFontString(nil, "OVERLAY")
+    text:SetPoint("LEFT", bar, "LEFT", 4, 0)
+    text:SetPoint("RIGHT", bar, "RIGHT", -4, 0)
+    text:SetJustifyH("CENTER")
+    text:SetWordWrap(false)
+    StyleFontString(text)
+
+    kickOverlays[unitFrame] = { frame = frame, bar = bar, icon = icon, text = text, timer = nil }
+end
+
+local function ShowKickOverlay(unitFrame, sourceName, spellTexture)
+    local overlay = kickOverlays[unitFrame]
+    if not overlay then return end
+
+    overlay.text:SetText("Kicked: " .. sourceName)
+    if spellTexture then
+        overlay.icon:SetTexture(spellTexture)
+    end
+    overlay.frame:Show()
+
+    -- Cancel existing timer
+    if overlay.timer then
+        overlay.timer:Cancel()
+    end
+
+    overlay.timer = C_Timer.NewTimer(KICK_DISPLAY_DURATION, function()
+        overlay.frame:Hide()
+        overlay.timer = nil
+    end)
+end
+
 local function SkinNamePlate(unitFrame)
     if not unitFrame or skinnedFrames[unitFrame] then return end
     skinnedFrames[unitFrame] = true
@@ -533,6 +640,7 @@ local function SkinNamePlate(unitFrame)
     CreateTargetArrows(unitFrame)
     CreateQuestIndicator(unitFrame)
     CreateHoverBorder(unitFrame)
+    CreateKickOverlay(unitFrame)
 end
 
 local function RefreshNamePlate(unitFrame)
@@ -576,6 +684,7 @@ function NameplateSkin:Apply()
     eventFrame:RegisterEvent("UNIT_SPELLCAST_CHANNEL_START")
     eventFrame:RegisterEvent("UNIT_SPELLCAST_INTERRUPTIBLE")
     eventFrame:RegisterEvent("UNIT_SPELLCAST_NOT_INTERRUPTIBLE")
+    eventFrame:RegisterEvent("UNIT_SPELLCAST_INTERRUPTED")
     eventFrame:SetScript("OnEvent", function(self, event, ...)
         if event == "NAME_PLATE_CREATED" then
             local plate = ...
@@ -603,6 +712,11 @@ function NameplateSkin:Apply()
             RefreshAllFocusOverlays()
         elseif event == "PLAYER_TARGET_CHANGED" then
             RefreshAllTargetArrows()
+            for _, plate in pairs(C_NamePlate.GetNamePlates()) do
+                if plate.UnitFrame and skinnedFrames[plate.UnitFrame] then
+                    UpdateQuestIndicatorPosition(plate.UnitFrame)
+                end
+            end
         elseif event == "QUEST_LOG_UPDATE" then
             for _, plate in pairs(C_NamePlate.GetNamePlates()) do
                 if plate.UnitFrame and skinnedFrames[plate.UnitFrame] then
@@ -633,6 +747,18 @@ function NameplateSkin:Apply()
                         r, g, b = 1, 0.7, 0
                     end
                     custom.bar:GetStatusBarTexture():SetVertexColor(r, g, b)
+                end
+            end
+        elseif event == "UNIT_SPELLCAST_INTERRUPTED" then
+            local unitId, _, _, interrupterGUID = ...
+            local plate = C_NamePlate.GetNamePlateForUnit(unitId)
+            if plate and plate.UnitFrame and skinnedFrames[plate.UnitFrame]
+                and interrupterGUID then
+                local name = UnitNameFromGUID(interrupterGUID)
+                if name then
+                    local custom = customCastBars[plate.UnitFrame.castBar]
+                    local texture = custom and custom.icon and custom.icon:GetTexture()
+                    ShowKickOverlay(plate.UnitFrame, name, texture)
                 end
             end
         end
