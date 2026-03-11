@@ -294,9 +294,9 @@ end
 local function SyncNameText(unitFrame)
     local overlay = nameOverlays[unitFrame]
     if not overlay then return end
-    if not unitFrame.name then return end
+    if not unitFrame.unit then return end
 
-    overlay:SetText(unitFrame.name:GetText() or "")
+    overlay:SetText(UnitName(unitFrame.unit) or "")
 end
 
 local function StyleAllText(unitFrame)
@@ -680,6 +680,7 @@ function NameplateSkin:Apply()
     eventFrame:RegisterEvent("PLAYER_TARGET_CHANGED")
     eventFrame:RegisterEvent("QUEST_LOG_UPDATE")
     eventFrame:RegisterEvent("UPDATE_MOUSEOVER_UNIT")
+    eventFrame:RegisterEvent("UNIT_NAME_UPDATE")
     eventFrame:RegisterEvent("UNIT_SPELLCAST_START")
     eventFrame:RegisterEvent("UNIT_SPELLCAST_CHANNEL_START")
     eventFrame:RegisterEvent("UNIT_SPELLCAST_INTERRUPTIBLE")
@@ -707,6 +708,12 @@ function NameplateSkin:Apply()
                 if plate.UnitFrame and skinnedFrames[plate.UnitFrame] then
                     UpdateThreatColor(plate.UnitFrame)
                 end
+            end
+        elseif event == "UNIT_NAME_UPDATE" then
+            local unitId = ...
+            local plate = C_NamePlate.GetNamePlateForUnit(unitId)
+            if plate and plate.UnitFrame and skinnedFrames[plate.UnitFrame] then
+                SyncNameText(plate.UnitFrame)
             end
         elseif event == "PLAYER_FOCUS_CHANGED" then
             RefreshAllFocusOverlays()
