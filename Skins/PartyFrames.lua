@@ -412,9 +412,9 @@ function PartyFrameSkin:Apply()
 
     -- Hook CompactUnitFrame_SetUnit to catch newly assigned party/raid frames
     hooksecurefunc("CompactUnitFrame_SetUnit", function(frame, unit)
-        if not frame then return end
-        local name = frame:GetName()
-        if not name then return end
+        if not frame or not frame.GetName then return end
+        local ok, name = pcall(frame.GetName, frame)
+        if not ok or not name then return end
         if not name:find("^CompactPartyFrameMember") and not name:find("^CompactRaidFrame%d") then return end
 
         if not skinnedFrames[frame] then
