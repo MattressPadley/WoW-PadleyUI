@@ -22,7 +22,9 @@ Skins\Nameplates.lua
 Skins\CastBar.lua
 Skins\Items.lua
 Skins\UnitFrames.lua
+Skins\ClassPower.lua
 Skins\PartyFrames.lua
+Skins\MirrorTimer.lua
 Skins\BetterBags.lua
 Skins\ObjectiveTracker.lua
 PadleyUI.lua
