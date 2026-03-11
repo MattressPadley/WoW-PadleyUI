@@ -20,17 +20,17 @@ local customHealthBars = {}   -- Blizzard healthBar → our StatusBar
 local customCastBars = {}     -- Blizzard castBar → { bar, icon, text }
 local blizzardHealthColors = {} -- Blizzard healthBar → { r, g, b } (cached reaction color)
 
--- Threat color tables (Plater-style defaults)
+-- Threat color tables
 -- nil = no override, use Blizzard's default reaction color
-local SAFE_COLOR = { 0.06, 0.59, 0.90 }  -- #0F96E6
+local NOCOMBAT_COLOR = { 0.06, 0.59, 0.90 }  -- blue — hostile but not in combat
 local THREAT_DPS = {
-    [0] = SAFE_COLOR,                     -- safe: blue
+    [0] = { 0.0, 1.0, 0.0 },             -- no aggro: green (good for DPS)
     [1] = { 1.0, 0.7, 0.0 },             -- pulling threat: orange
     [2] = { 1.0, 1.0, 0.0 },             -- tanking insecure: yellow
     [3] = { 1.0, 0.0, 0.0 },             -- has aggro: red (bad for DPS/healer)
 }
 local THREAT_TANK = {
-    [0] = SAFE_COLOR,                     -- safe: blue
+    [0] = { 1.0, 0.0, 0.0 },             -- no aggro: red (bad for tank)
     [1] = { 1.0, 0.7, 0.0 },             -- losing aggro: orange
     [2] = { 1.0, 1.0, 0.0 },             -- tanking insecure: yellow
     [3] = { 0.0, 1.0, 0.0 },             -- securely tanking: green (good for tanks)
@@ -59,7 +59,13 @@ local function UpdateThreatColor(unitFrame)
         end
         return
     end
-    threatOverrides[unitFrame] = GetThreatColor(unit)
+
+    if not UnitAffectingCombat(unit) then
+        threatOverrides[unitFrame] = NOCOMBAT_COLOR
+    else
+        threatOverrides[unitFrame] = GetThreatColor(unit)
+    end
+
     local color = threatOverrides[unitFrame]
     local custom = customHealthBars[unitFrame.healthBar]
     if custom then
@@ -554,12 +560,14 @@ end
 function NameplateSkin:Apply()
     -- Make nameplates less wide (default horizontalScale is 1.0)
     SetCVar("NamePlateHorizontalScale", 0.7)
+    SetCVar("nameplateShowFriendlyNPCs", 0)
 
     local eventFrame = CreateFrame("Frame")
     eventFrame:RegisterEvent("NAME_PLATE_CREATED")
     eventFrame:RegisterEvent("NAME_PLATE_UNIT_ADDED")
     eventFrame:RegisterEvent("UNIT_THREAT_LIST_UPDATE")
     eventFrame:RegisterEvent("UNIT_THREAT_SITUATION_UPDATE")
+    eventFrame:RegisterEvent("UNIT_FLAGS")
     eventFrame:RegisterEvent("PLAYER_FOCUS_CHANGED")
     eventFrame:RegisterEvent("PLAYER_TARGET_CHANGED")
     eventFrame:RegisterEvent("QUEST_LOG_UPDATE")
@@ -584,7 +592,8 @@ function NameplateSkin:Apply()
             end
             RefreshNamePlate(plate.UnitFrame)
         elseif event == "UNIT_THREAT_LIST_UPDATE"
-            or event == "UNIT_THREAT_SITUATION_UPDATE" then
+            or event == "UNIT_THREAT_SITUATION_UPDATE"
+            or event == "UNIT_FLAGS" then
             for _, plate in pairs(C_NamePlate.GetNamePlates()) do
                 if plate.UnitFrame and skinnedFrames[plate.UnitFrame] then
                     UpdateThreatColor(plate.UnitFrame)
