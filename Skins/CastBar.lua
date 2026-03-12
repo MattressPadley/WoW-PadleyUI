@@ -80,7 +80,7 @@ local function SkinCastBar(castBar)
     end
 
     -- Crop spell icon
-    if castBar.Icon then castBar.Icon:SetTexCoord(0.08, 0.92, 0.08, 0.92) end
+    if castBar.Icon then castBar.Icon:SetTexCoord(unpack(C.ICON_CROP)) end
 
     -- Enforce flat texture with re-entrancy guard
     hooksecurefunc(castBar, "SetStatusBarTexture", function(self)

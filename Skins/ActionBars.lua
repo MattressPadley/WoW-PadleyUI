@@ -87,7 +87,7 @@ local function SkinActionButton(button)
     -- 2) Restore the icon and crop for clean edges
     if icon then
         icon:SetAlpha(1)
-        icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+        icon:SetTexCoord(unpack(C.ICON_CROP))
     end
 
     -- 3) Remove rounded icon mask
@@ -125,7 +125,7 @@ local function SkinActionButton(button)
     local highlightTex = button:GetHighlightTexture()
     if highlightTex then
         highlightTex:SetTexture(C.BAR_TEXTURE)
-        highlightTex:SetVertexColor(1, 1, 1, 0.25)
+        highlightTex:SetVertexColor(unpack(C.HIGHLIGHT_OVERLAY))
         if icon then
             highlightTex:SetAllPoints(icon)
         end

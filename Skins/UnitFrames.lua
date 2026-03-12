@@ -954,7 +954,7 @@ local function SkinAuraButton(button)
                 region:Hide()
             end
         end
-        icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+        icon:SetTexCoord(unpack(C.ICON_CROP))
     end
 
     -- Hide named border elements

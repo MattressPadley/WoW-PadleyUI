@@ -16,9 +16,16 @@ ns.C = {
     -- Hover highlight
     HIGHLIGHT_COLOR = { 0.4, 0.4, 0.4, 1 },
 
+    -- Icon texcoord crop (removes default border artifacts)
+    ICON_CROP = { 0.08, 0.92, 0.08, 0.92 },
+
+    -- Highlight overlay for hover effects on buttons/items
+    HIGHLIGHT_OVERLAY = { 1, 1, 1, 0.25 },
+
     -- Fonts
     FONT = "Interface\\AddOns\\PadleyUI\\Fonts\\Expressway.ttf",
     FONT_SIZE = 11,
+    FONT_SIZE_SMALL = 10,
     FONT_FLAGS = "OUTLINE",
 
     -- Flat backdrop table (reused everywhere)

@@ -219,7 +219,7 @@ local function SkinCastBar(unitFrame)
         local icon = bar:CreateTexture(nil, "ARTWORK")
         icon:SetSize(iconSize, iconSize)
         icon:SetPoint("TOPRIGHT", bar, "TOPLEFT", -iconGap, 0)
-        icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+        icon:SetTexCoord(unpack(C.ICON_CROP))
 
         -- Icon backdrop
         local iconBg = bar:CreateTexture(nil, "BACKGROUND")
@@ -588,7 +588,7 @@ local function CreateKickOverlay(unitFrame)
     local icon = bar:CreateTexture(nil, "ARTWORK")
     icon:SetSize(iconSize, iconSize)
     icon:SetPoint("TOPRIGHT", bar, "TOPLEFT", -iconGap, 0)
-    icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+    icon:SetTexCoord(unpack(C.ICON_CROP))
 
     -- Icon backdrop
     local iconBg = bar:CreateTexture(nil, "BACKGROUND")

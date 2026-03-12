@@ -1,6 +1,6 @@
 local _, ns = ...
 
-local FONT = "Interface\\AddOns\\PadleyUI\\Fonts\\Expressway.ttf"
+local FONT = ns.C.FONT
 
 -- Override global font path variables so newly created UI elements use Expressway
 STANDARD_TEXT_FONT = FONT

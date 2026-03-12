@@ -84,7 +84,7 @@ local function SkinLootIcon(button)
         icon:RemoveMaskTexture(button.CircleMask)
         button.CircleMask:Hide()
     end
-    icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+    icon:SetTexCoord(unpack(C.ICON_CROP))
 
     -- Also remove masks from IconBorder so it can't clip rounded
     if button.IconBorder then
@@ -100,7 +100,7 @@ local function SkinLootIcon(button)
         if button.IconMask then highlightTex:RemoveMaskTexture(button.IconMask) end
         if button.CircleMask then highlightTex:RemoveMaskTexture(button.CircleMask) end
         highlightTex:SetTexture(C.BAR_TEXTURE)
-        highlightTex:SetVertexColor(1, 1, 1, 0.25)
+        highlightTex:SetVertexColor(unpack(C.HIGHLIGHT_OVERLAY))
         highlightTex:SetAllPoints(icon)
     end
 
@@ -284,7 +284,7 @@ local function SkinLootFrame()
 
         -- Add an "X" label
         local xText = closeBd:CreateFontString(nil, "OVERLAY")
-        xText:SetFont(C.FONT, 10, C.FONT_FLAGS)
+        xText:SetFont(C.FONT, C.FONT_SIZE_SMALL, C.FONT_FLAGS)
         xText:SetPoint("CENTER", 0, 0)
         xText:SetText("x")
 

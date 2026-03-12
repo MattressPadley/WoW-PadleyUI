@@ -35,7 +35,7 @@ local function SkinItemButton(button)
         end
     end
     if icon then
-        icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+        icon:SetTexCoord(unpack(C.ICON_CROP))
     end
 
     -- Also handle named IconMask
@@ -56,7 +56,7 @@ local function SkinItemButton(button)
     local highlightTex = button.GetHighlightTexture and button:GetHighlightTexture()
     if highlightTex then
         highlightTex:SetTexture(C.BAR_TEXTURE)
-        highlightTex:SetVertexColor(1, 1, 1, 0.25)
+        highlightTex:SetVertexColor(unpack(C.HIGHLIGHT_OVERLAY))
         if icon then
             highlightTex:SetAllPoints(icon)
         end

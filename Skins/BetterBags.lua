@@ -70,7 +70,7 @@ local function AddCloseButton(decoration, frame, addon, isPortrait)
     closeBd:SetBackdropBorderColor(C.BORDER_COLOR[1], C.BORDER_COLOR[2], C.BORDER_COLOR[3], C.BORDER_COLOR[4])
 
     local xText = closeBd:CreateFontString(nil, "OVERLAY")
-    xText:SetFont(C.FONT, 10, C.FONT_FLAGS)
+    xText:SetFont(C.FONT, C.FONT_SIZE_SMALL, C.FONT_FLAGS)
     xText:SetPoint("CENTER", 0, 0)
     xText:SetText("x")
 
@@ -217,14 +217,14 @@ function BetterBagsSkin:Apply()
 
             -- Crop icon
             if decoration.IconTexture then
-                decoration.IconTexture:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+                decoration.IconTexture:SetTexCoord(unpack(C.ICON_CROP))
             end
 
             -- Flat highlight
             local ht = decoration.GetHighlightTexture and decoration:GetHighlightTexture()
             if ht then
                 ht:SetTexture(C.BAR_TEXTURE)
-                ht:SetVertexColor(1, 1, 1, 0.25)
+                ht:SetVertexColor(unpack(C.HIGHLIGHT_OVERLAY))
                 if decoration.IconTexture then ht:SetAllPoints(decoration.IconTexture) end
             end
 

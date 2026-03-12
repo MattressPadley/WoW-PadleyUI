@@ -154,7 +154,7 @@ local function SkinMinimizeButton(button)
 
     -- Indicator text
     local indicator = btnBd:CreateFontString(nil, "OVERLAY")
-    indicator:SetFont(C.FONT, 10, C.FONT_FLAGS)
+    indicator:SetFont(C.FONT, C.FONT_SIZE_SMALL, C.FONT_FLAGS)
     indicator:SetPoint("CENTER", 0, 0)
     indicator:SetText("-")
 

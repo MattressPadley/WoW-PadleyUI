@@ -75,7 +75,7 @@ local function SkinCooldownIcon(icon)
                 end
             end
         end
-        iconTex:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+        iconTex:SetTexCoord(unpack(C.ICON_CROP))
     end
 
     -- Hide named art elements
@@ -128,7 +128,7 @@ local function SkinCooldownBar(item)
                 region:Hide()
             end
         end
-        iconTex:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+        iconTex:SetTexCoord(unpack(C.ICON_CROP))
         iconTex:SetAlpha(1)
     end
 
