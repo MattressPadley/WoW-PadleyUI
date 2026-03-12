@@ -20,6 +20,7 @@ Skins\ActionBars.lua
 Skins\CooldownTracker.lua
 Skins\Nameplates.lua
 Skins\CastBar.lua
+Skins\GCDBar.lua
 Skins\Items.lua
 Skins\UnitFrames.lua
 Skins\ClassPower.lua
