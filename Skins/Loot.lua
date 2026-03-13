@@ -241,61 +241,8 @@ local function SkinLootFrame()
 
     local lf = LootFrame
 
-    -- Hide NineSlice border
-    if lf.NineSlice then
-        lf.NineSlice:SetAlpha(0)
-    end
-
-    -- Hide background regions
-    if lf.Bg then
-        if lf.Bg.TopSection then lf.Bg.TopSection:SetAlpha(0) end
-        if lf.Bg.BottomLeft then lf.Bg.BottomLeft:SetAlpha(0) end
-        if lf.Bg.BottomRight then lf.Bg.BottomRight:SetAlpha(0) end
-        if lf.Bg.BottomEdge then lf.Bg.BottomEdge:SetAlpha(0) end
-    end
-
-    -- Apply flat backdrop
-    SE:ApplyBackdrop(lf)
-
-    -- Style the title text
-    if lf.TitleContainer and lf.TitleContainer.TitleText then
-        SE:StyleFont(lf.TitleContainer.TitleText)
-    end
-
-    -- Skin the close button
-    if lf.ClosePanelButton then
-        SE:StripTextures(lf.ClosePanelButton)
-        lf.ClosePanelButton:SetNormalTexture("")
-        lf.ClosePanelButton:SetHighlightTexture("")
-        lf.ClosePanelButton:SetPushedTexture("")
-        lf.ClosePanelButton:SetSize(22, 22)
-
-        local closeBd = CreateFrame("Frame", nil, lf.ClosePanelButton, "BackdropTemplate")
-        closeBd:SetPoint("TOPLEFT", 1, -1)
-        closeBd:SetPoint("BOTTOMRIGHT", -1, 1)
-        closeBd:SetFrameLevel(lf.ClosePanelButton:GetFrameLevel())
-        closeBd:SetBackdrop({
-            bgFile   = C.FLAT_BACKDROP.bgFile,
-            edgeFile = C.FLAT_BACKDROP.edgeFile,
-            edgeSize = C.BORDER_SIZE,
-        })
-        closeBd:SetBackdropColor(C.HEADER_COLOR[1], C.HEADER_COLOR[2], C.HEADER_COLOR[3], C.HEADER_COLOR[4])
-        closeBd:SetBackdropBorderColor(C.BORDER_COLOR[1], C.BORDER_COLOR[2], C.BORDER_COLOR[3], C.BORDER_COLOR[4])
-
-        -- Add an "X" label
-        local xText = closeBd:CreateFontString(nil, "OVERLAY")
-        xText:SetFont(C.FONT, C.FONT_SIZE_SMALL, C.FONT_FLAGS)
-        xText:SetPoint("CENTER", 0, 0)
-        xText:SetText("x")
-
-        -- Hover highlight
-        lf.ClosePanelButton:HookScript("OnEnter", function()
-            closeBd:SetBackdropBorderColor(C.HIGHLIGHT_COLOR[1], C.HIGHLIGHT_COLOR[2], C.HIGHLIGHT_COLOR[3], C.HIGHLIGHT_COLOR[4])
-        end)
-        lf.ClosePanelButton:HookScript("OnLeave", function()
-            closeBd:SetBackdropBorderColor(C.BORDER_COLOR[1], C.BORDER_COLOR[2], C.BORDER_COLOR[3], C.BORDER_COLOR[4])
-        end)
-    end
+    -- Skin the window frame (NineSlice, Bg, backdrop, title, close button)
+    SE:SkinWindow(lf)
 
     -- Helper to skin all current ScrollBox elements
     local function SkinAllElements()

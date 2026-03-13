@@ -30,12 +30,16 @@ frame:SetScript("OnEvent", function(self, event, loadedAddon)
         end
         if C_AddOns.IsAddOnLoaded("Blizzard_UIPanels_Game") then
             ns.LootSkin:Apply()
+            ns.CharacterFrameSkin:Apply()
         end
         if C_AddOns.IsAddOnLoaded("BetterBags") then
             ns.BetterBagsSkin:Apply()
         end
         if C_AddOns.IsAddOnLoaded("Blizzard_ObjectiveTracker") then
             ns.ObjectiveTrackerSkin:Apply()
+        end
+        if C_AddOns.IsAddOnLoaded("Blizzard_TokenUI") then
+            ns.CharacterFrameSkin:ApplyTokenFrame()
         end
     elseif loadedAddon == "BetterBags" then
         ns.BetterBagsSkin:Apply()
@@ -44,7 +48,10 @@ frame:SetScript("OnEvent", function(self, event, loadedAddon)
         ns.DamageMeterSkin:Apply()
     elseif loadedAddon == "Blizzard_UIPanels_Game" then
         ns.LootSkin:Apply()
+        ns.CharacterFrameSkin:Apply()
     elseif loadedAddon == "Blizzard_ObjectiveTracker" then
         ns.ObjectiveTrackerSkin:Apply()
+    elseif loadedAddon == "Blizzard_TokenUI" then
+        ns.CharacterFrameSkin:ApplyTokenFrame()
     end
 end)

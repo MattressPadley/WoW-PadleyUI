@@ -6,60 +6,95 @@ local ItemSkin = {}
 ns.ItemSkin = ItemSkin
 
 -- External tracking tables (avoids writing keys to Blizzard frames)
-local skinnedButtons = {}  -- button -> bdFrame
+local skinnedButtons = {}   -- button -> bdFrame
+local hookedBorders = {}    -- IconBorder -> true
+
+---------------------------------------------------------------------------
+-- Atlas-to-quality lookup (ElvUI pattern)
+---------------------------------------------------------------------------
+
+local QUALITY_ATLAS = {
+    ["auctionhouse-itemicon-border-gray"]     = 0,
+    ["auctionhouse-itemicon-border-white"]    = 1,
+    ["auctionhouse-itemicon-border-green"]    = 2,
+    ["auctionhouse-itemicon-border-blue"]     = 3,
+    ["auctionhouse-itemicon-border-purple"]   = 4,
+    ["auctionhouse-itemicon-border-orange"]   = 5,
+    ["auctionhouse-itemicon-border-artifact"] = 6,
+    ["auctionhouse-itemicon-border-account"]  = 7,
+    ["Professions-Slot-Frame"]                = 1,
+    ["Professions-Slot-Frame-Green"]          = 2,
+    ["Professions-Slot-Frame-Blue"]           = 3,
+    ["Professions-Slot-Frame-Epic"]           = 4,
+    ["Professions-Slot-Frame-Legendary"]      = 5,
+}
 
 ---------------------------------------------------------------------------
 -- Core: SkinItemButton
 ---------------------------------------------------------------------------
 
 local function SkinItemButton(button)
-    if not button or skinnedButtons[button] then return end
+    if not button or skinnedButtons[button] then return skinnedButtons[button] end
 
     local icon = button.icon or button.Icon
+    local iconTex = icon and icon.GetTexture and icon:GetTexture()
 
-    -- 1) Strip art — alpha-zero NormalTexture, PushedTexture; hide IconBorder
-    local normalTex = button.GetNormalTexture and button:GetNormalTexture()
-    if normalTex then normalTex:SetAlpha(0) end
-
-    local pushedTex = button.GetPushedTexture and button:GetPushedTexture()
-    if pushedTex then pushedTex:SetAlpha(0) end
-
-    if button.IconBorder then button.IconBorder:Hide() end
-
-    -- 2) Remove icon mask and crop icon
+    -- 1) Strip ALL texture regions (kills NormalTexture, borders, backgrounds)
+    --    and remove all MaskTextures (kills CircleMask making icons round)
     for i = 1, button:GetNumRegions() do
         local region = select(i, button:GetRegions())
-        if region and region:GetObjectType() == "MaskTexture" then
-            if icon then icon:RemoveMaskTexture(region) end
-            region:Hide()
+        if region then
+            local objType = region:GetObjectType()
+            if objType == "Texture" and region ~= icon then
+                region:SetTexture(0)
+                region:SetAtlas("")
+                region:SetAlpha(0)
+            elseif objType == "MaskTexture" then
+                if icon then icon:RemoveMaskTexture(region) end
+                region:Hide()
+            end
         end
     end
-    if icon then
-        icon:SetTexCoord(unpack(C.ICON_CROP))
-    end
 
-    -- Also handle named IconMask
+    -- Handle named masks (may not appear in GetRegions on all frames)
+    if button.CircleMask then
+        if icon then icon:RemoveMaskTexture(button.CircleMask) end
+        button.CircleMask:Hide()
+    end
     if button.IconMask then
         if icon then icon:RemoveMaskTexture(button.IconMask) end
         button.IconMask:Hide()
     end
 
-    -- 3) Child backdrop frame (never Mixin on Blizzard frames)
+    -- Crop icon and restore texture if stripping cleared it
+    if icon then
+        icon:SetTexCoord(unpack(C.ICON_CROP))
+        if iconTex and not icon:GetTexture() then
+            icon:SetTexture(iconTex)
+        end
+    end
+
+    -- 2) Child backdrop with permanent flat border
     local bdFrame = CreateFrame("Frame", nil, button, "BackdropTemplate")
     bdFrame:SetAllPoints()
     bdFrame:SetFrameLevel(math.max(button:GetFrameLevel() - 1, 0))
-    bdFrame:SetBackdrop({ bgFile = C.FLAT_BACKDROP.bgFile })
+    bdFrame:SetBackdrop(C.FLAT_BACKDROP)
     bdFrame:SetBackdropColor(C.BACKDROP_COLOR[1], C.BACKDROP_COLOR[2], C.BACKDROP_COLOR[3], C.BACKDROP_COLOR[4])
+    bdFrame:SetBackdropBorderColor(C.BORDER_COLOR[1], C.BORDER_COLOR[2], C.BORDER_COLOR[3], C.BORDER_COLOR[4])
     bdFrame:EnableMouse(false)
 
-    -- 4) Restyle highlight — flat white overlay anchored to icon
+    -- 3) Anchor icon inside the border
+    if icon then
+        icon:ClearAllPoints()
+        icon:SetPoint("TOPLEFT", bdFrame, "TOPLEFT", C.BORDER_SIZE, -C.BORDER_SIZE)
+        icon:SetPoint("BOTTOMRIGHT", bdFrame, "BOTTOMRIGHT", -C.BORDER_SIZE, C.BORDER_SIZE)
+    end
+
+    -- 4) Flat highlight overlay
     local highlightTex = button.GetHighlightTexture and button:GetHighlightTexture()
     if highlightTex then
-        highlightTex:SetTexture(C.BAR_TEXTURE)
-        highlightTex:SetVertexColor(unpack(C.HIGHLIGHT_OVERLAY))
-        if icon then
-            highlightTex:SetAllPoints(icon)
-        end
+        highlightTex:SetColorTexture(C.HIGHLIGHT_OVERLAY[1], C.HIGHLIGHT_OVERLAY[2], C.HIGHLIGHT_OVERLAY[3], C.HIGHLIGHT_OVERLAY[4])
+        if icon then highlightTex:SetAllPoints(icon) end
     end
 
     skinnedButtons[button] = bdFrame
@@ -67,62 +102,75 @@ local function SkinItemButton(button)
 end
 
 ---------------------------------------------------------------------------
--- Core: UpdateItemBorder
+-- Core: HandleIconBorder (ElvUI-style reactive quality colors)
+--
+-- Hooks Blizzard's IconBorder so that whenever Blizzard sets its atlas,
+-- vertex color, or show/hide state, we mirror the quality color onto our
+-- flat backdrop border.  The Blizzard border itself stays hidden.
 ---------------------------------------------------------------------------
 
-local function SetBorderForQuality(bdFrame, quality)
-    if quality and quality >= 2 and ITEM_QUALITY_COLORS and ITEM_QUALITY_COLORS[quality] then
-        local c = ITEM_QUALITY_COLORS[quality]
-        bdFrame:SetBackdrop({
-            bgFile   = C.FLAT_BACKDROP.bgFile,
-            edgeFile = C.FLAT_BACKDROP.edgeFile,
-            edgeSize = C.BORDER_SIZE,
-        })
-        bdFrame:SetBackdropColor(C.BACKDROP_COLOR[1], C.BACKDROP_COLOR[2], C.BACKDROP_COLOR[3], C.BACKDROP_COLOR[4])
-        bdFrame:SetBackdropBorderColor(c.r, c.g, c.b, 1)
-    else
-        bdFrame:SetBackdrop({ bgFile = C.FLAT_BACKDROP.bgFile })
-        bdFrame:SetBackdropColor(C.BACKDROP_COLOR[1], C.BACKDROP_COLOR[2], C.BACKDROP_COLOR[3], C.BACKDROP_COLOR[4])
-    end
-end
+local function HandleIconBorder(border, bdFrame)
+    if not border or hookedBorders[border] then return end
+    hookedBorders[border] = true
 
-local function UpdateItemBorder(button, bdFrame)
-    if not bdFrame then bdFrame = skinnedButtons[button] end
-    if not bdFrame then return end
-
-    -- Hide Blizzard's IconBorder each update
-    if button.IconBorder then button.IconBorder:Hide() end
-
-    local quality
-
-    -- Try GetItemQualityFromButton (available on bag/bank item buttons)
-    if button.GetItemQualityFromButton then
-        local ok, q = pcall(button.GetItemQualityFromButton, button)
-        if ok then quality = q end
-    end
-
-    -- Fallback: read IconBorder vertex color if it was visible
-    if not quality and button.IconBorder and button.IconBorder:IsShown() then
-        local r, g, b = button.IconBorder:GetVertexColor()
-        if ITEM_QUALITY_COLORS then
-            for q = 7, 0, -1 do
-                local c = ITEM_QUALITY_COLORS[q]
-                if c and math.abs(c.r - r) < 0.05 and math.abs(c.g - g) < 0.05 and math.abs(c.b - b) < 0.05 then
-                    quality = q
-                    break
-                end
+    -- Capture initial quality color before hiding
+    if border:IsShown() then
+        local atlas = border.GetAtlas and border:GetAtlas()
+        local quality = atlas and QUALITY_ATLAS[atlas]
+        if quality and quality >= 2 and ITEM_QUALITY_COLORS and ITEM_QUALITY_COLORS[quality] then
+            local c = ITEM_QUALITY_COLORS[quality]
+            bdFrame:SetBackdropBorderColor(c.r, c.g, c.b, 1)
+        else
+            local r, g, b = border:GetVertexColor()
+            if r then
+                bdFrame:SetBackdropBorderColor(r, g, b, 1)
             end
         end
     end
 
-    SetBorderForQuality(bdFrame, quality)
+    border:Hide()
+
+    -- Atlas update → translate to quality color
+    hooksecurefunc(border, "SetAtlas", function(self, atlas)
+        local quality = QUALITY_ATLAS[atlas]
+        if quality and ITEM_QUALITY_COLORS and ITEM_QUALITY_COLORS[quality] then
+            local c = ITEM_QUALITY_COLORS[quality]
+            bdFrame:SetBackdropBorderColor(c.r, c.g, c.b, 1)
+        end
+    end)
+
+    -- Vertex color update → forward directly
+    hooksecurefunc(border, "SetVertexColor", function(self, r, g, b)
+        if r then
+            bdFrame:SetBackdropBorderColor(r, g, b, 1)
+        end
+    end)
+
+    -- Keep Blizzard border hidden; pass 0 so Hide hook ignores our own call
+    hooksecurefunc(border, "Show", function(self)
+        self:Hide(0)
+    end)
+
+    -- When Blizzard hides border (empty slot / common quality) → reset color
+    hooksecurefunc(border, "Hide", function(self, value)
+        if value == 0 then return end
+        bdFrame:SetBackdropBorderColor(C.BORDER_COLOR[1], C.BORDER_COLOR[2], C.BORDER_COLOR[3], C.BORDER_COLOR[4])
+    end)
+
+    -- SetShown variant
+    hooksecurefunc(border, "SetShown", function(self, show)
+        if show then
+            self:Hide(0)
+        else
+            bdFrame:SetBackdropBorderColor(C.BORDER_COLOR[1], C.BORDER_COLOR[2], C.BORDER_COLOR[3], C.BORDER_COLOR[4])
+        end
+    end)
 end
 
 ---------------------------------------------------------------------------
--- Character Panel: UpdateEquipSlotBorder
+-- Character Panel: SkinCharacterSlots
 ---------------------------------------------------------------------------
 
--- Equipment slot frame name -> API slot name mapping
 local EQUIP_SLOTS = {
     { frame = "CharacterHeadSlot",          slot = "HeadSlot" },
     { frame = "CharacterNeckSlot",          slot = "NeckSlot" },
@@ -144,37 +192,6 @@ local EQUIP_SLOTS = {
     { frame = "CharacterSecondaryHandSlot", slot = "SecondaryHandSlot" },
 }
 
--- External table mapping button -> slotID (avoids writing to Blizzard frames)
-local slotIDs = {}
-
-local function QualityFromVertexColor(r, g, b)
-    if not ITEM_QUALITY_COLORS then return nil end
-    for q = 7, 0, -1 do
-        local c = ITEM_QUALITY_COLORS[q]
-        if c and math.abs(c.r - r) < 0.05 and math.abs(c.g - g) < 0.05 and math.abs(c.b - b) < 0.05 then
-            return q
-        end
-    end
-    return nil
-end
-
-local function UpdateEquipSlotBorder(button)
-    local bdFrame = skinnedButtons[button]
-    if not bdFrame then return end
-
-    if button.IconBorder then button.IconBorder:Hide() end
-
-    local slotID = slotIDs[button]
-    if not slotID then return end
-
-    local quality = GetInventoryItemQuality("player", slotID)
-    SetBorderForQuality(bdFrame, quality)
-end
-
----------------------------------------------------------------------------
--- Character Panel: SkinCharacterSlots
----------------------------------------------------------------------------
-
 local characterSkinned = false
 
 local function SkinCharacterSlots()
@@ -183,42 +200,22 @@ local function SkinCharacterSlots()
     for _, entry in ipairs(EQUIP_SLOTS) do
         local button = _G[entry.frame]
         if button then
-            -- Get reliable slotID via API instead of button:GetID()
-            local slotID = GetInventorySlotInfo(entry.slot)
-            if slotID and slotID > 0 then
-                slotIDs[button] = slotID
-            end
-
             local bdFrame = SkinItemButton(button)
             if bdFrame then
-                -- Hook IconBorder:Show on the instance to reactively catch updates
-                if button.IconBorder then
-                    hooksecurefunc(button.IconBorder, "Show", function(iconBorder)
-                        local r, g, b = iconBorder:GetVertexColor()
-                        iconBorder:Hide()
-                        local quality = QualityFromVertexColor(r, g, b)
-                        SetBorderForQuality(bdFrame, quality)
-                    end)
-                end
+                HandleIconBorder(button.IconBorder, bdFrame)
 
-                -- Set initial border for already-equipped items
-                UpdateEquipSlotBorder(button)
+                -- Set initial quality for already-equipped items
+                local slotID = GetInventorySlotInfo(entry.slot)
+                if slotID then
+                    local quality = GetInventoryItemQuality("player", slotID)
+                    if quality and quality >= 2 and ITEM_QUALITY_COLORS and ITEM_QUALITY_COLORS[quality] then
+                        local c = ITEM_QUALITY_COLORS[quality]
+                        bdFrame:SetBackdropBorderColor(c.r, c.g, c.b, 1)
+                    end
+                end
             end
         end
     end
-
-    -- Listen for inventory events as backup re-check
-    local eventFrame = CreateFrame("Frame")
-    eventFrame:RegisterEvent("UNIT_INVENTORY_CHANGED")
-    eventFrame:RegisterEvent("PLAYER_EQUIPMENT_CHANGED")
-    eventFrame:SetScript("OnEvent", function(_, event, unit)
-        if event == "UNIT_INVENTORY_CHANGED" and unit ~= "player" then return end
-        for button, _ in pairs(slotIDs) do
-            if skinnedButtons[button] then
-                UpdateEquipSlotBorder(button)
-            end
-        end
-    end)
 
     characterSkinned = true
 end
@@ -229,18 +226,6 @@ end
 
 local bankSkinned = false
 
-local function SkinBagButton(button)
-    local bdFrame = SkinItemButton(button)
-    if bdFrame then
-        UpdateItemBorder(button, bdFrame)
-        if button.SetItemButtonQuality then
-            hooksecurefunc(button, "SetItemButtonQuality", function(btn)
-                UpdateItemBorder(btn)
-            end)
-        end
-    end
-end
-
 local function SkinBank()
     if bankSkinned then return end
 
@@ -248,7 +233,10 @@ local function SkinBank()
     for i = 1, 28 do
         local button = _G["BankFrameItem" .. i]
         if button then
-            SkinBagButton(button)
+            local bdFrame = SkinItemButton(button)
+            if bdFrame then
+                HandleIconBorder(button.IconBorder, bdFrame)
+            end
         end
     end
 
@@ -257,7 +245,10 @@ local function SkinBank()
         for i = 1, 7 do
             local button = BankSlotsFrame["Bag" .. i]
             if button then
-                SkinBagButton(button)
+                local bdFrame = SkinItemButton(button)
+                if bdFrame then
+                    HandleIconBorder(button.IconBorder, bdFrame)
+                end
             end
         end
     end
@@ -268,7 +259,10 @@ local function SkinBank()
             local child = select(i, BankFrame:GetChildren())
             if child and child.Items then
                 for _, button in ipairs(child.Items) do
-                    SkinBagButton(button)
+                    local bdFrame = SkinItemButton(button)
+                    if bdFrame then
+                        HandleIconBorder(button.IconBorder, bdFrame)
+                    end
                 end
             end
         end
@@ -293,25 +287,13 @@ local function SkinMerchant()
             if itemButton then
                 local bdFrame = SkinItemButton(itemButton)
                 if bdFrame then
-                    UpdateItemBorder(itemButton, bdFrame)
+                    HandleIconBorder(itemButton.IconBorder, bdFrame)
                 end
             end
         end
     end
 
     merchantSkinned = true
-end
-
-local function UpdateMerchantBorders()
-    for i = 1, 12 do
-        local merchantItem = _G["MerchantItem" .. i]
-        if merchantItem then
-            local itemButton = merchantItem.ItemButton or _G["MerchantItem" .. i .. "ItemButton"]
-            if itemButton and skinnedButtons[itemButton] then
-                UpdateItemBorder(itemButton)
-            end
-        end
-    end
 end
 
 ---------------------------------------------------------------------------
@@ -353,7 +335,6 @@ function ItemSkin:Apply()
             if not merchantSkinned then
                 C_Timer.After(0, SkinMerchant)
             end
-            C_Timer.After(0, UpdateMerchantBorders)
         end)
     end
     EventUtil.ContinueOnAddOnLoaded("Blizzard_MerchantFrame", function()
@@ -362,7 +343,6 @@ function ItemSkin:Apply()
                 if not merchantSkinned then
                     C_Timer.After(0, SkinMerchant)
                 end
-                C_Timer.After(0, UpdateMerchantBorders)
             end)
         end
     end)
