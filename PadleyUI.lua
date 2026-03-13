@@ -44,6 +44,9 @@ frame:SetScript("OnEvent", function(self, event, loadedAddon)
         if C_AddOns.IsAddOnLoaded("Blizzard_Professions") then
             ns.ProfessionsSkin:Apply()
         end
+        if C_AddOns.IsAddOnLoaded("Blizzard_WorldMap") then
+            ns.WorldMapSkin:Apply()
+        end
     elseif loadedAddon == "BetterBags" then
         ns.BetterBagsSkin:Apply()
     elseif loadedAddon == "Blizzard_DamageMeter" then
@@ -58,5 +61,7 @@ frame:SetScript("OnEvent", function(self, event, loadedAddon)
         ns.CharacterFrameSkin:ApplyTokenFrame()
     elseif loadedAddon == "Blizzard_Professions" then
         ns.ProfessionsSkin:Apply()
+    elseif loadedAddon == "Blizzard_WorldMap" then
+        ns.WorldMapSkin:Apply()
     end
 end)
