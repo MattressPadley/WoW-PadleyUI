@@ -41,6 +41,9 @@ frame:SetScript("OnEvent", function(self, event, loadedAddon)
         if C_AddOns.IsAddOnLoaded("Blizzard_TokenUI") then
             ns.CharacterFrameSkin:ApplyTokenFrame()
         end
+        if C_AddOns.IsAddOnLoaded("Blizzard_Professions") then
+            ns.ProfessionsSkin:Apply()
+        end
     elseif loadedAddon == "BetterBags" then
         ns.BetterBagsSkin:Apply()
     elseif loadedAddon == "Blizzard_DamageMeter" then
@@ -53,5 +56,7 @@ frame:SetScript("OnEvent", function(self, event, loadedAddon)
         ns.ObjectiveTrackerSkin:Apply()
     elseif loadedAddon == "Blizzard_TokenUI" then
         ns.CharacterFrameSkin:ApplyTokenFrame()
+    elseif loadedAddon == "Blizzard_Professions" then
+        ns.ProfessionsSkin:Apply()
     end
 end)

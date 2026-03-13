@@ -3,7 +3,7 @@
 ## Notes: A custom UI addon by Padley - skins built-in Blizzard frames
 ## Author: Padley
 ## Version: @project-version@
-## OptionalDeps: Blizzard_DamageMeter, Blizzard_UIPanels_Game, BetterBags, Blizzard_ObjectiveTracker, Blizzard_TokenUI
+## OptionalDeps: Blizzard_DamageMeter, Blizzard_UIPanels_Game, BetterBags, Blizzard_ObjectiveTracker, Blizzard_TokenUI, Blizzard_Professions
 ## SavedVariables: PadleyUI_DB
 
 Core\Constants.lua
@@ -29,4 +29,5 @@ Skins\PartyFrames.lua
 Skins\MirrorTimer.lua
 Skins\BetterBags.lua
 Skins\ObjectiveTracker.lua
+Skins\Professions.lua
 PadleyUI.lua
