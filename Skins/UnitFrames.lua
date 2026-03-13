@@ -90,8 +90,8 @@ local levelTexts = {}
 local function StyleUnitName(nameFS, unit)
     if not nameFS then return end
     SE:StyleFont(nameFS, nil, "")
-    nameFS:SetShadowOffset(1, -1)
-    nameFS:SetShadowColor(0, 0, 0, 1)
+    nameFS:SetShadowOffset(C.SHADOW_OFFSET[1], C.SHADOW_OFFSET[2])
+    nameFS:SetShadowColor(unpack(C.SHADOW_COLOR))
     if unit and UnitExists(unit) then
         local r, g, b = GetUnitHealthColor(unit)
         nameFS:SetTextColor(r, g, b)
@@ -121,8 +121,8 @@ local function CreateLevelText(parent, healthBar, unit)
     if not healthBar then return end
     local fs = parent:CreateFontString(nil, "OVERLAY")
     SE:StyleFont(fs, nil, "")
-    fs:SetShadowOffset(1, -1)
-    fs:SetShadowColor(0, 0, 0, 1)
+    fs:SetShadowOffset(C.SHADOW_OFFSET[1], C.SHADOW_OFFSET[2])
+    fs:SetShadowColor(unpack(C.SHADOW_COLOR))
     fs:SetPoint("BOTTOMRIGHT", healthBar, "TOPRIGHT", 0, 2)
     levelTexts[unit] = fs
     return fs
@@ -937,29 +937,73 @@ local function SkinAuraButton(button)
 
     local icon = button.Icon or button.icon
 
-    -- Alpha-zero decorative textures (keep only the icon)
+    -- Alpha-zero ALL decorative textures and hide ALL mask textures on the button
     for i = 1, button:GetNumRegions() do
         local region = select(i, button:GetRegions())
-        if region and region:GetObjectType() == "Texture" and region ~= icon then
-            region:SetAlpha(0)
-        end
-    end
-
-    -- Remove masks for square corners
-    if icon then
-        for i = 1, button:GetNumRegions() do
-            local region = select(i, button:GetRegions())
-            if region and region:GetObjectType() == "MaskTexture" then
-                icon:RemoveMaskTexture(region)
+        if region then
+            local objType = region:GetObjectType()
+            if objType == "Texture" and region ~= icon then
+                region:SetAlpha(0)
+            elseif objType == "MaskTexture" then
                 region:Hide()
             end
         end
-        icon:SetTexCoord(unpack(C.ICON_CROP))
     end
 
-    -- Hide named border elements
+    -- Also strip textures / masks from child frames (Cooldown edge, overlays, etc.)
+    for i = 1, select("#", button:GetChildren()) do
+        local child = select(i, button:GetChildren())
+        if child then
+            for j = 1, child:GetNumRegions() do
+                local region = select(j, child:GetRegions())
+                if region then
+                    local objType = region:GetObjectType()
+                    if objType == "MaskTexture" then
+                        region:Hide()
+                    end
+                end
+            end
+            -- Hide cooldown edge texture (the thin border on the swipe)
+            if child.GetEdgeTexture and child:GetEdgeTexture() then
+                child:SetHideCountdownNumbers(false)
+                child:SetSwipeColor(0, 0, 0, 0.6)
+            end
+        end
+    end
+
+    -- Remove masks directly from the icon texture and prevent re-addition
+    if icon then
+        RemoveMasksFromTexture(icon)
+        icon:SetTexCoord(unpack(C.ICON_CROP))
+
+        -- Block Blizzard from re-adding masks
+        hooksecurefunc(icon, "AddMaskTexture", function(self, mask)
+            self:RemoveMaskTexture(mask)
+            mask:Hide()
+        end)
+
+        -- Block Blizzard from resetting texcoords
+        hooksecurefunc(icon, "SetTexCoord", function(self, l, r, t, b)
+            if l ~= C.ICON_CROP[1] or r ~= C.ICON_CROP[2]
+                or t ~= C.ICON_CROP[3] or b ~= C.ICON_CROP[4] then
+                self:SetTexCoord(unpack(C.ICON_CROP))
+            end
+        end)
+    end
+
+    -- Hide named mask / border children
+    if button.IconMask then button.IconMask:Hide() end
     if button.Border then button.Border:SetAlpha(0) end
     if button.Stealable then button.Stealable:SetAlpha(0) end
+
+    -- Handle Cooldown frame
+    local cooldown = button.Cooldown or button.cooldown
+    if cooldown then
+        cooldown:SetSwipeColor(0, 0, 0, 0.6)
+        if cooldown.SetEdgeTexture then
+            cooldown:SetEdgeTexture("")
+        end
+    end
 
     -- Flat backdrop behind icon
     local bd = CreateFrame("Frame", nil, button, "BackdropTemplate")
@@ -968,25 +1012,10 @@ local function SkinAuraButton(button)
     SE:ApplyBackdrop(bd)
 end
 
-local function SkinTargetAuras()
-    for i = 1, 32 do
-        local buff = _G["TargetFrameBuff" .. i]
-        if buff then SkinAuraButton(buff) end
-    end
-    for i = 1, 16 do
-        local debuff = _G["TargetFrameDebuff" .. i]
-        if debuff then SkinAuraButton(debuff) end
-    end
-end
-
-local function SkinFocusAuras()
-    for i = 1, 32 do
-        local buff = _G["FocusFrameBuff" .. i]
-        if buff then SkinAuraButton(buff) end
-    end
-    for i = 1, 16 do
-        local debuff = _G["FocusFrameDebuff" .. i]
-        if debuff then SkinAuraButton(debuff) end
+local function SkinFrameAuras(frame)
+    if not frame or not frame.auraPools then return end
+    for aura in frame.auraPools:EnumerateActive() do
+        SkinAuraButton(aura)
     end
 end
 
@@ -1008,27 +1037,27 @@ function UnitFrameSkin:Apply()
         end
     end)
 
+    -- Hook UpdateAuras on instances — fires after Blizzard finishes creating/updating
+    -- aura pool frames, so we skin every active aura button each refresh
+    hooksecurefunc(TargetFrame, "UpdateAuras", function(self)
+        SkinFrameAuras(self)
+    end)
+    hooksecurefunc(FocusFrame, "UpdateAuras", function(self)
+        SkinFrameAuras(self)
+    end)
+
     local eventFrame = CreateFrame("Frame")
     eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
     eventFrame:RegisterEvent("PLAYER_TARGET_CHANGED")
     eventFrame:RegisterEvent("PLAYER_FOCUS_CHANGED")
     eventFrame:RegisterEvent("UNIT_DISPLAYPOWER")
-    eventFrame:RegisterUnitEvent("UNIT_AURA", "target", "focus")
     eventFrame:SetScript("OnEvent", function(self, event, arg1)
         if event == "PLAYER_ENTERING_WORLD" then
             RefreshNameColor(PlayerFrame and PlayerFrame.name, "player")
         elseif event == "PLAYER_TARGET_CHANGED" then
             RefreshTargetColors()
-            C_Timer.After(0, SkinTargetAuras)
         elseif event == "PLAYER_FOCUS_CHANGED" then
             RefreshFocusColors()
-            C_Timer.After(0, SkinFocusAuras)
-        elseif event == "UNIT_AURA" then
-            if arg1 == "target" then
-                C_Timer.After(0, SkinTargetAuras)
-            elseif arg1 == "focus" then
-                C_Timer.After(0, SkinFocusAuras)
-            end
         elseif event == "UNIT_DISPLAYPOWER" then
             for bar, unit in pairs(powerBarUnits) do
                 if unit == arg1 then

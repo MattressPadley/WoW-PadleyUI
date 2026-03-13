@@ -75,8 +75,9 @@ local function SkinCastBar(castBar)
     if castBar.Text then
         castBar.Text:ClearAllPoints()
         castBar.Text:SetPoint("CENTER", castBar, "CENTER", 0, 0)
-        local font, size = castBar.Text:GetFont()
-        castBar.Text:SetFont(font, size, "OUTLINE")
+        SE:StyleFont(castBar.Text, nil, "")
+        castBar.Text:SetShadowOffset(C.SHADOW_OFFSET[1], C.SHADOW_OFFSET[2])
+        castBar.Text:SetShadowColor(unpack(C.SHADOW_COLOR))
     end
 
     -- Crop spell icon

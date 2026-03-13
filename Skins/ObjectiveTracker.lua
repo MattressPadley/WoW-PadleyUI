@@ -91,7 +91,9 @@ local function SkinModuleHeader(header)
 
     -- Style header text
     if headerText then
-        SE:StyleFont(headerText)
+        SE:StyleFont(headerText, nil, "")
+        headerText:SetShadowOffset(C.SHADOW_OFFSET[1], C.SHADOW_OFFSET[2])
+        headerText:SetShadowColor(unpack(C.SHADOW_COLOR))
     end
 end
 
@@ -154,7 +156,7 @@ local function SkinMinimizeButton(button)
 
     -- Indicator text
     local indicator = btnBd:CreateFontString(nil, "OVERLAY")
-    indicator:SetFont(C.FONT, C.FONT_SIZE_SMALL, C.FONT_FLAGS)
+    indicator:SetFont(C.FONT, C.FONT_SIZE_SMALL, "")
     indicator:SetPoint("CENTER", 0, 0)
     indicator:SetText("-")
 
@@ -237,7 +239,9 @@ local function SkinProgressBar(progressBar)
 
     -- Style percentage label
     if bar.Label then
-        SE:StyleFont(bar.Label)
+        SE:StyleFont(bar.Label, nil, "")
+        bar.Label:SetShadowOffset(C.SHADOW_OFFSET[1], C.SHADOW_OFFSET[2])
+        bar.Label:SetShadowColor(unpack(C.SHADOW_COLOR))
     end
 end
 
@@ -245,8 +249,29 @@ end
 -- Block skinning (idempotent — blocks are recycled)
 ---------------------------------------------------------------------------
 
+local function StyleFontShadow(fs)
+    if not fs or not fs.SetFont then return end
+    SE:StyleFont(fs, nil, "")
+    fs:SetShadowOffset(C.SHADOW_OFFSET[1], C.SHADOW_OFFSET[2])
+    fs:SetShadowColor(unpack(C.SHADOW_COLOR))
+end
+
 local function SkinBlock(block)
     if not block then return end
+
+    -- Quest/task title
+    if block.HeaderText then
+        StyleFontShadow(block.HeaderText)
+    end
+
+    -- Objective lines
+    if block.usedLines then
+        for _, line in pairs(block.usedLines) do
+            if line.Text then
+                StyleFontShadow(line.Text)
+            end
+        end
+    end
 
     if block.ProgressBar then
         SkinProgressBar(block.ProgressBar)

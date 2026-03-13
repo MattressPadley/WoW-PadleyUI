@@ -22,11 +22,18 @@ ns.C = {
     -- Highlight overlay for hover effects on buttons/items
     HIGHLIGHT_OVERLAY = { 1, 1, 1, 0.25 },
 
+    -- Text shadow
+    SHADOW_OFFSET = { 2, -1 },
+    SHADOW_COLOR  = { 0, 0, 0, 1 },
+
     -- Fonts
     FONT = "Interface\\AddOns\\PadleyUI\\Fonts\\Expressway.ttf",
     FONT_SIZE = 11,
     FONT_SIZE_SMALL = 10,
     FONT_FLAGS = "OUTLINE",
+
+    -- Frame spacing (extra vertical gap between party/raid frames)
+    FRAME_SPACING = 4,
 
     -- Flat backdrop table (reused everywhere)
     FLAT_BACKDROP = {

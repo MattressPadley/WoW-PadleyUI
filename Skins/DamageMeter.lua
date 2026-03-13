@@ -21,6 +21,18 @@ local function SkinEntry(entry)
     -- Always re-apply flat texture (SetStyle resets it during Init)
     statusBar:SetStatusBarTexture(C.BAR_TEXTURE)
 
+    -- Style entry text: custom font, no outline, shadow instead
+    if statusBar.Name then
+        SE:StyleFont(statusBar.Name, nil, "")
+        statusBar.Name:SetShadowOffset(C.SHADOW_OFFSET[1], C.SHADOW_OFFSET[2])
+        statusBar.Name:SetShadowColor(unpack(C.SHADOW_COLOR))
+    end
+    if statusBar.Value then
+        SE:StyleFont(statusBar.Value, nil, "")
+        statusBar.Value:SetShadowOffset(C.SHADOW_OFFSET[1], C.SHADOW_OFFSET[2])
+        statusBar.Value:SetShadowColor(unpack(C.SHADOW_COLOR))
+    end
+
     -- Hide the shadow background and edge regions
     local bgRegions = statusBar.BackgroundRegions
     if bgRegions then
@@ -135,7 +147,9 @@ local function SkinSessionWindow(window)
     if sessionDD then
         SE:SkinDropdownButton(sessionDD)
         if sessionDD.SessionName then
-            SE:StyleFont(sessionDD.SessionName)
+            SE:StyleFont(sessionDD.SessionName, nil, "")
+            sessionDD.SessionName:SetShadowOffset(C.SHADOW_OFFSET[1], C.SHADOW_OFFSET[2])
+            sessionDD.SessionName:SetShadowColor(unpack(C.SHADOW_COLOR))
         end
     end
 
@@ -143,7 +157,9 @@ local function SkinSessionWindow(window)
     if typeDD then
         SE:SkinDropdownButton(typeDD)
         if typeDD.TypeName then
-            SE:StyleFont(typeDD.TypeName)
+            SE:StyleFont(typeDD.TypeName, nil, "")
+            typeDD.TypeName:SetShadowOffset(C.SHADOW_OFFSET[1], C.SHADOW_OFFSET[2])
+            typeDD.TypeName:SetShadowColor(unpack(C.SHADOW_COLOR))
         end
         if not buttonDecorations[typeDD] then
             local arrow = typeDD:CreateTexture(nil, "ARTWORK")

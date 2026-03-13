@@ -15,6 +15,8 @@ local targetArrows = {}  -- keyed by UnitFrame → { left, right }
 local questIndicators = {} -- keyed by UnitFrame → FontString
 local hoverBorders = {}   -- keyed by UnitFrame → backdrop Frame
 local kickOverlays = {}   -- keyed by UnitFrame → { frame, bar, icon, text, timer }
+local auraFrames = {}      -- keyed by UnitFrame → { buffs = {...}, debuffs = {...}, iconSize = N }
+local auraState = {}       -- keyed by UnitFrame → { buffCount = 0, debuffCount = 0 }
 
 -- Custom bars overlaid on Blizzard's (alpha-zeroed) bars
 local customHealthBars = {}   -- Blizzard healthBar → our StatusBar
@@ -43,6 +45,43 @@ scanTip:SetOwner(WorldFrame, "ANCHOR_NONE")
 
 local KICK_DISPLAY_DURATION = 2  -- seconds to show "Kicked: Name"
 local KICK_BAR_COLOR = { 0.7, 0.0, 0.0 }  -- dark red for interrupted bar
+
+local MAX_BUFFS = 4
+local MAX_DEBUFFS = 6
+local MAX_CC = 2
+local AURA_GAP = 2
+local BUFF_PAD = 4  -- gap between rightmost buff icon and health bar left edge
+local CC_PAD = 4    -- gap between leftmost CC icon and health bar right edge
+
+-- Fallback if GetUnitAuras doesn't exist (pre-TWW)
+local function GetUnitAurasSafe(unit, filter)
+    if C_UnitAuras.GetUnitAuras then
+        return C_UnitAuras.GetUnitAuras(unit, filter)
+    end
+    local results = {}
+    local fn = filter:find("HELPFUL") and C_UnitAuras.GetBuffDataByIndex
+                                       or C_UnitAuras.GetDebuffDataByIndex
+    for i = 1, 40 do
+        local aura = fn(unit, i)
+        if not aura then break end
+        results[#results + 1] = aura
+    end
+    return results
+end
+
+local function IsBuffRelevant(unit, auraInstanceID)
+    -- Keep if it passes any Blizzard importance category
+    if not C_UnitAuras.IsAuraFilteredOutByInstanceID(unit, auraInstanceID, "HELPFUL|RAID_IN_COMBAT") then
+        return true
+    end
+    if not C_UnitAuras.IsAuraFilteredOutByInstanceID(unit, auraInstanceID, "HELPFUL|BIG_DEFENSIVE") then
+        return true
+    end
+    if not C_UnitAuras.IsAuraFilteredOutByInstanceID(unit, auraInstanceID, "HELPFUL|EXTERNAL_DEFENSIVE") then
+        return true
+    end
+    return false
+end
 
 local threatOverrides = {}  -- unitFrame → { r, g, b } or nil
 
@@ -94,8 +133,8 @@ local NAMEPLATE_FONT_SIZE = C.FONT_SIZE + 2
 local function StyleFontString(fs)
     if not fs or not fs.SetFont then return end
     SE:StyleFont(fs, NAMEPLATE_FONT_SIZE, "")
-    fs:SetShadowOffset(1, -1)
-    fs:SetShadowColor(0, 0, 0, 1)
+    fs:SetShadowOffset(C.SHADOW_OFFSET[1], C.SHADOW_OFFSET[2])
+    fs:SetShadowColor(unpack(C.SHADOW_COLOR))
 end
 
 local function UpdateCastBarInterruptColor(unitFrame)
@@ -137,7 +176,9 @@ local function SkinHealthBar(unitFrame)
         -- Our own StatusBar, child of Blizzard's healthBar
         local bar = CreateFrame("StatusBar", nil, healthBar)
         bar:SetStatusBarTexture(C.BAR_TEXTURE)
-        bar:SetAllPoints()
+        bar:SetPoint("CENTER", healthBar, "CENTER")
+        bar:SetSize(ns.Config:Get("nameplates", "width"),
+                    ns.Config:Get("nameplates", "height"))
         bar:SetFrameLevel(healthBar:GetFrameLevel() + 2)
         customHealthBars[healthBar] = bar
 
@@ -197,8 +238,8 @@ local function SkinCastBar(unitFrame)
     if not hookedBars[castBar] then
         hookedBars[castBar] = true
 
-        local barHeight = healthBar and healthBar:GetHeight() or castBar:GetHeight()
-        local barWidth = healthBar and healthBar:GetWidth() or castBar:GetWidth()
+        local barWidth = ns.Config:Get("nameplates", "width")
+        local barHeight = ns.Config:Get("nameplates", "height")
         local iconSize = barHeight
         local iconGap = 2
 
@@ -270,6 +311,22 @@ local function CleanupChrome(unitFrame)
 
     if unitFrame.aggroHighlight then
         unitFrame.aggroHighlight:SetAlpha(0)
+    end
+
+    if unitFrame.BuffFrame then
+        unitFrame.BuffFrame:SetAlpha(0)
+        hooksecurefunc(unitFrame.BuffFrame, "Show", function(self)
+            self:SetAlpha(0)
+        end)
+    end
+
+    -- Hide Blizzard's entire aura display (buffs, debuffs, CC, loss of control)
+    local af = unitFrame.AurasFrame
+    if af then
+        af:SetAlpha(0)
+        hooksecurefunc(af, "Show", function(self)
+            self:SetAlpha(0)
+        end)
     end
 end
 
@@ -398,8 +455,36 @@ local function UpdateTargetArrows(unitFrame)
 
     local unit = unitFrame.unit
     local show = unit and UnitExists("target") and UnitIsUnit(unit, "target")
-    for _, tex in ipairs(arrows) do
-        if show then tex:Show() else tex:Hide() end
+    for _, frame in ipairs(arrows) do
+        if show then frame:Show() else frame:Hide() end
+    end
+
+    -- Shift arrows past inline aura icons
+    if show then
+        local custom = customHealthBars[unitFrame.healthBar]
+        if custom then
+            -- Shift left arrow past buff icons
+            local leftArrow = arrows[1]
+            local buffCount = auraState[unitFrame] and auraState[unitFrame].buffCount or 0
+            local leftExtra = 0
+            if buffCount > 0 then
+                local iconSize = auraFrames[unitFrame] and auraFrames[unitFrame].iconSize or 14
+                leftExtra = BUFF_PAD + buffCount * (iconSize + AURA_GAP)
+            end
+            leftArrow:ClearAllPoints()
+            leftArrow:SetPoint("RIGHT", custom, "LEFT", -(ARROW_PAD + leftExtra), 0)
+
+            -- Shift right arrow past CC icons
+            local rightArrow = arrows[2]
+            local ccCount = auraState[unitFrame] and auraState[unitFrame].ccCount or 0
+            local rightExtra = 0
+            if ccCount > 0 then
+                local iconSize = auraFrames[unitFrame] and auraFrames[unitFrame].iconSize or 14
+                rightExtra = CC_PAD + ccCount * (iconSize + AURA_GAP)
+            end
+            rightArrow:ClearAllPoints()
+            rightArrow:SetPoint("LEFT", custom, "RIGHT", ARROW_PAD + rightExtra, 0)
+        end
     end
 end
 
@@ -413,16 +498,21 @@ end
 
 local function GetQuestProgressForUnit(unit)
     if not unit or not UnitExists(unit) then return nil end
+    if C_Secrets.ShouldUnitIdentityBeSecret(unit) then return nil end
 
-    -- Tooltip scanning: SetUnit populates the tooltip with exactly the quest
-    -- objectives relevant to this mob. No UnitName call needed (avoids taint).
-    scanTip:SetOwner(WorldFrame, "ANCHOR_NONE")
-    scanTip:SetUnit(unit)
+    local info = C_TooltipInfo.GetUnit(unit)
+    if not info or not info.lines then return nil end
 
-    for i = 2, scanTip:NumLines() do
-        local line = _G["PadleyUIScanTipTextLeft" .. i]
-        if line then
-            local text = line:GetText()
+    -- Filter to quest-typed lines only; their leftText is never secret.
+    -- Non-quest lines (unit name, guild, etc.) carry secret text on nameplates.
+    local ignoreUntilTitle = false
+    for _, line in ipairs(info.lines) do
+        if line.type == Enum.TooltipDataLineType.QuestPlayer then
+            ignoreUntilTitle = (line.leftText ~= UnitName("player"))
+        elseif line.type == Enum.TooltipDataLineType.QuestTitle then
+            ignoreUntilTitle = false
+        elseif line.type == Enum.TooltipDataLineType.QuestObjective and not ignoreUntilTitle then
+            local text = line.leftText
             if text then
                 -- Kill/collect quests: "3/5" pattern
                 local cur, req = text:match("(%d+)/(%d+)")
@@ -444,7 +534,6 @@ local function GetQuestProgressForUnit(unit)
         end
     end
 
-    scanTip:Hide()
     return nil
 end
 
@@ -467,10 +556,18 @@ local function UpdateQuestIndicatorPosition(unitFrame)
     local custom = customHealthBars[unitFrame.healthBar]
     if not custom then return end
 
+    -- CC offset
+    local ccCount = auraState[unitFrame] and auraState[unitFrame].ccCount or 0
+    local ccOffset = 0
+    if ccCount > 0 then
+        local iconSize = auraFrames[unitFrame] and auraFrames[unitFrame].iconSize or 14
+        ccOffset = CC_PAD + ccCount * (iconSize + AURA_GAP)
+    end
+
     local unit = unitFrame.unit
-    local offset = 4
+    local offset = 4 + ccOffset
     if unit and UnitExists("target") and UnitIsUnit(unit, "target") then
-        offset = ARROW_PAD + 12 + 4  -- clear the target arrow
+        offset = ARROW_PAD + 12 + 4 + ccOffset  -- clear the target arrow + CC icons
     end
     indicator:ClearAllPoints()
     indicator:SetPoint("LEFT", custom, "RIGHT", offset, 0)
@@ -555,9 +652,8 @@ local function CreateKickOverlay(unitFrame)
 
     local plate = unitFrame:GetParent()
 
-    local healthBar = unitFrame.healthBar
-    local barHeight = healthBar and healthBar:GetHeight() or castBar:GetHeight()
-    local barWidth = healthBar and healthBar:GetWidth() or castBar:GetWidth()
+    local barWidth = ns.Config:Get("nameplates", "width")
+    local barHeight = ns.Config:Get("nameplates", "height")
     local iconSize = barHeight
     local iconGap = 2
 
@@ -629,6 +725,236 @@ local function ShowKickOverlay(unitFrame, sourceName, spellTexture)
     end)
 end
 
+----------------------------------------------------------------------------
+-- Aura Icons (buffs inline-left, debuffs above, CC inline-right)
+----------------------------------------------------------------------------
+
+local function CreateAuraIcon(parent, level, iconSize, filter)
+    local frame = CreateFrame("Button", nil, parent)
+    frame:SetFrameLevel(level)
+    frame:SetSize(iconSize, iconSize)
+
+    -- Tooltip on hover (unit/auraInstanceID/filter set by UpdateAuras)
+    frame.auraFilter = filter
+    frame:EnableMouse(true)
+    frame:SetScript("OnEnter", function(self)
+        if not self.auraUnit or not self.auraInstanceID then return end
+        GameTooltip_SetDefaultAnchor(GameTooltip, self)
+        if self.auraFilter == "HELPFUL" then
+            GameTooltip:SetUnitBuffByAuraInstanceID(self.auraUnit, self.auraInstanceID)
+        else
+            GameTooltip:SetUnitDebuffByAuraInstanceID(self.auraUnit, self.auraInstanceID)
+        end
+        GameTooltip:Show()
+    end)
+    frame:SetScript("OnLeave", function()
+        GameTooltip:Hide()
+    end)
+
+    -- Ctrl+Alt+Shift+RightClick to blacklist
+    frame:RegisterForClicks("RightButtonUp")
+    frame:SetScript("OnClick", function(self)
+        if not IsControlKeyDown() or not IsAltKeyDown() or not IsShiftKeyDown() then return end
+        if not self.auraUnit or not self.auraInstanceID then return end
+        -- Use a hidden tooltip to extract the spellId (aura fields are secret)
+        scanTip:SetOwner(WorldFrame, "ANCHOR_NONE")
+        if self.auraFilter == "HELPFUL" then
+            scanTip:SetUnitBuffByAuraInstanceID(self.auraUnit, self.auraInstanceID)
+        else
+            scanTip:SetUnitDebuffByAuraInstanceID(self.auraUnit, self.auraInstanceID)
+        end
+        local data = scanTip:GetTooltipData()
+        scanTip:Hide()
+        if data and data.id then
+            local name = data.lines and data.lines[1] and data.lines[1].leftText or ("Spell " .. data.id)
+            local icon = C_Spell.GetSpellTexture(data.id)
+            local auraType = self.auraFilter == "HELPFUL" and "buff" or "debuff"
+            ns.Config:AddToAuraBlacklist(data.id, name, icon, auraType)
+            print("|cff00ccffPadleyUI:|r Blacklisted " .. name)
+        end
+    end)
+
+    local bg = frame:CreateTexture(nil, "BACKGROUND")
+    bg:SetAllPoints()
+    bg:SetColorTexture(C.BACKDROP_COLOR[1], C.BACKDROP_COLOR[2],
+                       C.BACKDROP_COLOR[3], C.BACKDROP_COLOR[4])
+
+    local icon = frame:CreateTexture(nil, "ARTWORK")
+    icon:SetAllPoints()
+    icon:SetTexCoord(unpack(C.ICON_CROP))
+
+    local cooldown = CreateFrame("Cooldown", nil, frame, "CooldownFrameTemplate")
+    cooldown:SetAllPoints()
+    cooldown:SetDrawEdge(false)
+    cooldown:SetDrawBling(false)
+    cooldown:SetDrawSwipe(true)
+    cooldown:SetSwipeColor(0, 0, 0, 0.6)
+    cooldown:SetHideCountdownNumbers(false)
+
+    -- Style the countdown text: small font, no border, use shadow constant
+    -- Blizzard re-applies font on cooldown updates, so hook to re-style each time
+    local function StyleCooldownText(cd)
+        local text = cd:GetRegions()
+        if text and text.SetFont then
+            text:SetFont(C.FONT, C.FONT_SIZE_SMALL, "")
+            text:SetShadowOffset(C.SHADOW_OFFSET[1], C.SHADOW_OFFSET[2])
+            text:SetShadowColor(unpack(C.SHADOW_COLOR))
+        end
+    end
+    StyleCooldownText(cooldown)
+    hooksecurefunc(cooldown, "SetCooldownFromDurationObject", StyleCooldownText)
+
+    frame:Hide()
+    return { frame = frame, icon = icon, cooldown = cooldown }
+end
+
+local function CreateAuraFrames(unitFrame)
+    local custom = customHealthBars[unitFrame.healthBar]
+    if not custom or auraFrames[unitFrame] then return end
+
+    local plate = unitFrame:GetParent()
+    local iconSize = math.max(custom:GetHeight(), 14)
+    local level = custom:GetFrameLevel() + 3
+
+    local buffs = {}
+    local debuffs = {}
+    local cc = {}
+
+    -- Buff icons: inline-left of health bar, growing leftward
+    for i = 1, MAX_BUFFS do
+        local slot = CreateAuraIcon(plate, level, iconSize, "HELPFUL")
+        slot.frame:SetPoint("RIGHT", custom, "LEFT",
+            -(BUFF_PAD + (i - 1) * (iconSize + AURA_GAP)), 0)
+        buffs[i] = slot
+    end
+
+    -- Debuff icons: above health bar, growing rightward
+    for i = 1, MAX_DEBUFFS do
+        local slot = CreateAuraIcon(plate, level, iconSize, "HARMFUL")
+        slot.frame:SetPoint("BOTTOMLEFT", custom, "TOPLEFT",
+            (i - 1) * (iconSize + AURA_GAP), 2)
+        debuffs[i] = slot
+    end
+
+    -- CC icons: inline-right of health bar, growing rightward
+    for i = 1, MAX_CC do
+        local slot = CreateAuraIcon(plate, level, iconSize, "HARMFUL")
+        slot.frame:SetPoint("LEFT", custom, "RIGHT",
+            CC_PAD + (i - 1) * (iconSize + AURA_GAP), 0)
+        cc[i] = slot
+    end
+
+    auraFrames[unitFrame] = { buffs = buffs, debuffs = debuffs, cc = cc, iconSize = iconSize }
+    auraState[unitFrame] = { buffCount = 0, debuffCount = 0, ccCount = 0 }
+end
+
+-- Blacklist check using IsAuraFilteredOutByInstanceID (secret-value safe, no pcall needed)
+-- We create a custom filter string per blacklisted spell — but since we can't embed spell IDs
+-- in filter strings, we use pcall + tooltip ID extraction as fallback.
+local function IsAuraBlacklisted(blacklist, unit, instanceID, filter)
+    local info
+    if filter == "HELPFUL" then
+        info = C_TooltipInfo.GetUnitBuffByAuraInstanceID(unit, instanceID)
+    else
+        info = C_TooltipInfo.GetUnitDebuffByAuraInstanceID(unit, instanceID)
+    end
+    if not info then return false end
+    local ok, result = pcall(function() return blacklist[info.id] end)
+    return ok and result ~= nil
+end
+
+local function UpdateAuras(unitFrame)
+    local frames = auraFrames[unitFrame]
+    if not frames then return end
+    local unit = unitFrame.unit
+    if not unit or not UnitExists(unit) then
+        for i = 1, MAX_BUFFS do frames.buffs[i].frame:Hide() end
+        for i = 1, MAX_DEBUFFS do frames.debuffs[i].frame:Hide() end
+        for i = 1, MAX_CC do frames.cc[i].frame:Hide() end
+        auraState[unitFrame].buffCount = 0
+        auraState[unitFrame].debuffCount = 0
+        auraState[unitFrame].ccCount = 0
+        UpdateTargetArrows(unitFrame)
+        return
+    end
+
+    local buffIdx = 0
+    local debuffIdx = 0
+    local ccIdx = 0
+    local blacklist = ns.Config.db.auraBlacklist
+
+    -- Query CC first so we can exclude these IDs from the debuff list
+    -- (auraInstanceID is never secret — safe to read and compare)
+    local ccIDs = {}
+    local ccAuras = GetUnitAurasSafe(unit, "HARMFUL|CROWD_CONTROL")
+    for _, aura in ipairs(ccAuras) do
+        if ccIdx >= MAX_CC then break end
+        if not IsAuraBlacklisted(blacklist, unit, aura.auraInstanceID, "HARMFUL") then
+            ccIdx = ccIdx + 1
+            ccIDs[aura.auraInstanceID] = true
+            local slot = frames.cc[ccIdx]
+            slot.icon:SetTexture(aura.icon)
+            slot.frame.auraUnit = unit
+            slot.frame.auraInstanceID = aura.auraInstanceID
+            local dur = C_UnitAuras.GetAuraDuration(unit, aura.auraInstanceID)
+            if dur then slot.cooldown:SetCooldownFromDurationObject(dur) end
+            slot.frame:Show()
+        end
+    end
+
+    -- Buffs: INCLUDE_NAME_PLATE_ONLY filters out mounts, food, etc.
+    -- IsAuraFilteredOutByInstanceID further checks against our filter
+    local buffs = GetUnitAurasSafe(unit, "HELPFUL|INCLUDE_NAME_PLATE_ONLY")
+    for _, aura in ipairs(buffs) do
+        if buffIdx >= MAX_BUFFS then break end
+        if IsBuffRelevant(unit, aura.auraInstanceID)
+            and not IsAuraBlacklisted(blacklist, unit, aura.auraInstanceID, "HELPFUL") then
+            buffIdx = buffIdx + 1
+            local slot = frames.buffs[buffIdx]
+            slot.icon:SetTexture(aura.icon)
+            slot.frame.auraUnit = unit
+            slot.frame.auraInstanceID = aura.auraInstanceID
+            local dur = C_UnitAuras.GetAuraDuration(unit, aura.auraInstanceID)
+            if dur then slot.cooldown:SetCooldownFromDurationObject(dur) end
+            slot.frame:Show()
+        end
+    end
+
+    -- Debuffs: player's own harmful auras, excluding any already shown as CC
+    local debuffs = GetUnitAurasSafe(unit, "HARMFUL|PLAYER")
+    for _, aura in ipairs(debuffs) do
+        if debuffIdx >= MAX_DEBUFFS then break end
+        if not ccIDs[aura.auraInstanceID] then
+            if not IsAuraBlacklisted(blacklist, unit, aura.auraInstanceID, "HARMFUL") then
+                debuffIdx = debuffIdx + 1
+                local slot = frames.debuffs[debuffIdx]
+                slot.icon:SetTexture(aura.icon)
+                slot.frame.auraUnit = unit
+                slot.frame.auraInstanceID = aura.auraInstanceID
+                local dur = C_UnitAuras.GetAuraDuration(unit, aura.auraInstanceID)
+                if dur then slot.cooldown:SetCooldownFromDurationObject(dur) end
+                slot.frame:Show()
+            end
+        end
+    end
+
+    -- Hide unused slots
+    for i = buffIdx + 1, MAX_BUFFS do frames.buffs[i].frame:Hide() end
+    for i = debuffIdx + 1, MAX_DEBUFFS do frames.debuffs[i].frame:Hide() end
+    for i = ccIdx + 1, MAX_CC do frames.cc[i].frame:Hide() end
+
+    auraState[unitFrame].buffCount = buffIdx
+    auraState[unitFrame].debuffCount = debuffIdx
+    auraState[unitFrame].ccCount = ccIdx
+
+    UpdateTargetArrows(unitFrame)
+    UpdateQuestIndicatorPosition(unitFrame)
+end
+
+local function IsNamePlateUnit(unitId)
+    return unitId and unitId:sub(1, 9) == "nameplate"
+end
+
 local function SkinNamePlate(unitFrame)
     if not unitFrame or skinnedFrames[unitFrame] then return end
     skinnedFrames[unitFrame] = true
@@ -642,6 +968,14 @@ local function SkinNamePlate(unitFrame)
     CreateQuestIndicator(unitFrame)
     CreateHoverBorder(unitFrame)
     CreateKickOverlay(unitFrame)
+    CreateAuraFrames(unitFrame)
+
+    -- Hook AurasFrame to catch aura updates during secure nameplate setup
+    if unitFrame.AurasFrame and unitFrame.AurasFrame.RefreshAuras then
+        hooksecurefunc(unitFrame.AurasFrame, "RefreshAuras", function()
+            UpdateAuras(unitFrame)
+        end)
+    end
 end
 
 local function RefreshNamePlate(unitFrame)
@@ -662,14 +996,72 @@ local function RefreshNamePlate(unitFrame)
     end
     SyncNameText(unitFrame)
     UpdateFocusOverlay(unitFrame)
+    UpdateAuras(unitFrame)
     UpdateTargetArrows(unitFrame)
     UpdateQuestIndicator(unitFrame)
 end
 
+function NameplateSkin:ResizeAll()
+    local w = ns.Config:Get("nameplates", "width")
+    local h = ns.Config:Get("nameplates", "height")
+    for _, bar in pairs(customHealthBars) do
+        bar:SetSize(w, h)
+    end
+    -- Resize cast bars to match
+    local iconGap = 2
+    for _, custom in pairs(customCastBars) do
+        custom.bar:ClearAllPoints()
+        custom.bar:SetPoint("TOPLEFT", custom.bar:GetParent(), "TOPLEFT", h + iconGap, 0)
+        custom.bar:SetSize(w - h - iconGap, h)
+        custom.icon:SetSize(h, h)
+    end
+    -- Resize kick overlays to match
+    for _, overlay in pairs(kickOverlays) do
+        overlay.bar:ClearAllPoints()
+        overlay.bar:SetPoint("TOPLEFT", overlay.frame, "TOPLEFT", h + iconGap, 0)
+        overlay.bar:SetPoint("BOTTOMRIGHT", overlay.frame, "BOTTOMRIGHT", 0, 0)
+        overlay.icon:SetSize(h, h)
+        overlay.frame:SetSize(w, h)
+    end
+    -- Resize inline aura icons (buffs, CC) to match health bar height
+    local iconSize = math.max(h, 14)
+    for unitFrame, frames in pairs(auraFrames) do
+        frames.iconSize = iconSize
+        local custom = customHealthBars[unitFrame.healthBar]
+        if custom then
+            for i, slot in ipairs(frames.buffs) do
+                slot.frame:SetSize(iconSize, iconSize)
+                slot.frame:ClearAllPoints()
+                slot.frame:SetPoint("RIGHT", custom, "LEFT",
+                    -(BUFF_PAD + (i - 1) * (iconSize + AURA_GAP)), 0)
+            end
+            for i, slot in ipairs(frames.debuffs) do
+                slot.frame:SetSize(iconSize, iconSize)
+                slot.frame:ClearAllPoints()
+                slot.frame:SetPoint("BOTTOMLEFT", custom, "TOPLEFT",
+                    (i - 1) * (iconSize + AURA_GAP), 2)
+            end
+            for i, slot in ipairs(frames.cc) do
+                slot.frame:SetSize(iconSize, iconSize)
+                slot.frame:ClearAllPoints()
+                slot.frame:SetPoint("LEFT", custom, "RIGHT",
+                    CC_PAD + (i - 1) * (iconSize + AURA_GAP), 0)
+            end
+        end
+    end
+end
+
 function NameplateSkin:Apply()
-    -- Make nameplates less wide (default horizontalScale is 1.0)
-    SetCVar("NamePlateHorizontalScale", 0.7)
     SetCVar("nameplateShowFriendlyNPCs", 0)
+
+    -- Refresh all visible auras when blacklist changes
+    ns.Config.onBlacklistChanged = function()
+        for _, plate in pairs(C_NamePlate.GetNamePlates()) do
+            if plate.UnitFrame and skinnedFrames[plate.UnitFrame] then
+                UpdateAuras(plate.UnitFrame)
+            end
+        end
+    end
 
     local eventFrame = CreateFrame("Frame")
     eventFrame:RegisterEvent("NAME_PLATE_CREATED")
@@ -687,6 +1079,8 @@ function NameplateSkin:Apply()
     eventFrame:RegisterEvent("UNIT_SPELLCAST_INTERRUPTIBLE")
     eventFrame:RegisterEvent("UNIT_SPELLCAST_NOT_INTERRUPTIBLE")
     eventFrame:RegisterEvent("UNIT_SPELLCAST_INTERRUPTED")
+    eventFrame:RegisterEvent("UNIT_AURA")
+    eventFrame:RegisterEvent("NAME_PLATE_UNIT_REMOVED")
     eventFrame:SetScript("OnEvent", function(self, event, ...)
         if event == "NAME_PLATE_CREATED" then
             local plate = ...
@@ -712,6 +1106,7 @@ function NameplateSkin:Apply()
             end
         elseif event == "UNIT_NAME_UPDATE" then
             local unitId = ...
+            if not IsNamePlateUnit(unitId) then return end
             local plate = C_NamePlate.GetNamePlateForUnit(unitId)
             if plate and plate.UnitFrame and skinnedFrames[plate.UnitFrame] then
                 SyncNameText(plate.UnitFrame)
@@ -736,6 +1131,7 @@ function NameplateSkin:Apply()
         elseif event == "UNIT_SPELLCAST_START"
             or event == "UNIT_SPELLCAST_CHANNEL_START" then
             local unitId = ...
+            if not IsNamePlateUnit(unitId) then return end
             local plate = C_NamePlate.GetNamePlateForUnit(unitId)
             if plate and plate.UnitFrame and skinnedFrames[plate.UnitFrame] then
                 UpdateCastBarInterruptColor(plate.UnitFrame)
@@ -744,6 +1140,7 @@ function NameplateSkin:Apply()
             or event == "UNIT_SPELLCAST_NOT_INTERRUPTIBLE" then
             -- Event name tells us the state directly; no API query needed
             local unitId = ...
+            if not IsNamePlateUnit(unitId) then return end
             local plate = C_NamePlate.GetNamePlateForUnit(unitId)
             if plate and plate.UnitFrame and skinnedFrames[plate.UnitFrame] then
                 local custom = customCastBars[plate.UnitFrame.castBar]
@@ -759,6 +1156,7 @@ function NameplateSkin:Apply()
             end
         elseif event == "UNIT_SPELLCAST_INTERRUPTED" then
             local unitId, _, _, interrupterGUID = ...
+            if not IsNamePlateUnit(unitId) then return end
             local plate = C_NamePlate.GetNamePlateForUnit(unitId)
             if plate and plate.UnitFrame and skinnedFrames[plate.UnitFrame]
                 and interrupterGUID then
@@ -769,6 +1167,25 @@ function NameplateSkin:Apply()
                     ShowKickOverlay(plate.UnitFrame, name, texture)
                 end
             end
+        elseif event == "UNIT_AURA" then
+            local unitId = ...
+            if not IsNamePlateUnit(unitId) then return end
+            local plate = C_NamePlate.GetNamePlateForUnit(unitId)
+            if plate and plate.UnitFrame and skinnedFrames[plate.UnitFrame] then
+                UpdateAuras(plate.UnitFrame)
+            end
+        elseif event == "NAME_PLATE_UNIT_REMOVED" then
+            local unitId = ...
+            local plate = C_NamePlate.GetNamePlateForUnit(unitId)
+            if plate and plate.UnitFrame and auraFrames[plate.UnitFrame] then
+                local frames = auraFrames[plate.UnitFrame]
+                for i = 1, MAX_BUFFS do frames.buffs[i].frame:Hide() end
+                for i = 1, MAX_DEBUFFS do frames.debuffs[i].frame:Hide() end
+                for i = 1, MAX_CC do frames.cc[i].frame:Hide() end
+                auraState[plate.UnitFrame].buffCount = 0
+                auraState[plate.UnitFrame].debuffCount = 0
+                auraState[plate.UnitFrame].ccCount = 0
+            end
         end
     end)
 
@@ -778,4 +1195,5 @@ function NameplateSkin:Apply()
             SkinNamePlate(plate.UnitFrame)
         end
     end
+
 end

@@ -298,8 +298,8 @@ end
 local function StyleFontString(fs)
     if not fs or not fs.SetFont then return end
     SE:StyleFont(fs, nil, "")
-    fs:SetShadowOffset(1, -1)
-    fs:SetShadowColor(0, 0, 0, 1)
+    fs:SetShadowOffset(C.SHADOW_OFFSET[1], C.SHADOW_OFFSET[2])
+    fs:SetShadowColor(unpack(C.SHADOW_COLOR))
 end
 
 local function StyleName(frame)
@@ -363,6 +363,33 @@ local function RefreshColors(frame)
 end
 
 ---------------------------------------------------------------------------
+-- Spacing
+---------------------------------------------------------------------------
+
+local function ApplySpacing(prefix, count)
+    for i = 2, count do
+        local frame = _G[prefix .. i]
+        if not frame then break end
+        local point, rel, relPoint, x, y = frame:GetPoint()
+        if not point then break end
+
+        -- Determine axis from the anchor and nudge the offset
+        local isVertical = (y ~= 0 and x == 0)
+        local isHorizontal = (x ~= 0 and y == 0)
+
+        if isVertical then
+            local sign = y < 0 and -1 or 1
+            frame:ClearAllPoints()
+            frame:SetPoint(point, rel, relPoint, x, y + sign * C.FRAME_SPACING)
+        elseif isHorizontal then
+            local sign = x < 0 and -1 or 1
+            frame:ClearAllPoints()
+            frame:SetPoint(point, rel, relPoint, x + sign * C.FRAME_SPACING, y)
+        end
+    end
+end
+
+---------------------------------------------------------------------------
 -- Frame Discovery
 ---------------------------------------------------------------------------
 
@@ -374,6 +401,7 @@ local function ScanPartyFrames()
             RefreshColors(frame)
         end
     end
+    ApplySpacing("CompactPartyFrameMember", 5)
 end
 
 local function ScanRaidFrames()
@@ -384,6 +412,7 @@ local function ScanRaidFrames()
             RefreshColors(frame)
         end
     end
+    ApplySpacing("CompactRaidFrame", 40)
 end
 
 ---------------------------------------------------------------------------

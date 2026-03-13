@@ -9,6 +9,7 @@
 Core\Constants.lua
 Core\Fonts.lua
 Core\SkinEngine.lua
+Core\Config.lua
 Skins\DamageMeter.lua
 Skins\Tooltip.lua
 Skins\Loot.lua

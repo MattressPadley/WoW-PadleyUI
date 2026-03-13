@@ -4,6 +4,7 @@ local frame = CreateFrame("Frame")
 frame:RegisterEvent("ADDON_LOADED")
 frame:SetScript("OnEvent", function(self, event, loadedAddon)
     if loadedAddon == addonName then
+        ns.Config:Init()
         print("|cff00ccffPadleyUI|r loaded!")
 
         -- Always-available skins (core UI, no optional dep)
