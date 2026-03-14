@@ -932,12 +932,20 @@ end
 local skinnedAuras = {}
 
 local function SkinAuraButton(button)
-    if not button or skinnedAuras[button] then return end
-    skinnedAuras[button] = true
+    if not button then return end
 
     local icon = button.Icon or button.icon
+    if not icon then return end
 
-    -- Alpha-zero ALL decorative textures and hide ALL mask textures on the button
+    -- Per-refresh: re-apply crop and strip masks (catches Blizzard resets)
+    icon:SetTexCoord(unpack(C.ICON_CROP))
+    RemoveMasksFromTexture(icon)
+
+    -- One-time structural changes
+    if skinnedAuras[button] then return end
+    skinnedAuras[button] = true
+
+    -- Alpha-zero decorative textures (keep the icon visible)
     for i = 1, button:GetNumRegions() do
         local region = select(i, button:GetRegions())
         if region then
@@ -950,20 +958,18 @@ local function SkinAuraButton(button)
         end
     end
 
-    -- Also strip textures / masks from child frames (Cooldown edge, overlays, etc.)
+    -- Strip masks from child frames (Cooldown edge, overlays, etc.)
     for i = 1, select("#", button:GetChildren()) do
         local child = select(i, button:GetChildren())
         if child then
             for j = 1, child:GetNumRegions() do
                 local region = select(j, child:GetRegions())
                 if region then
-                    local objType = region:GetObjectType()
-                    if objType == "MaskTexture" then
+                    if region:GetObjectType() == "MaskTexture" then
                         region:Hide()
                     end
                 end
             end
-            -- Hide cooldown edge texture (the thin border on the swipe)
             if child.GetEdgeTexture and child:GetEdgeTexture() then
                 child:SetHideCountdownNumbers(false)
                 child:SetSwipeColor(0, 0, 0, 0.6)
@@ -971,27 +977,7 @@ local function SkinAuraButton(button)
         end
     end
 
-    -- Remove masks directly from the icon texture and prevent re-addition
-    if icon then
-        RemoveMasksFromTexture(icon)
-        icon:SetTexCoord(unpack(C.ICON_CROP))
-
-        -- Block Blizzard from re-adding masks
-        hooksecurefunc(icon, "AddMaskTexture", function(self, mask)
-            self:RemoveMaskTexture(mask)
-            mask:Hide()
-        end)
-
-        -- Block Blizzard from resetting texcoords
-        hooksecurefunc(icon, "SetTexCoord", function(self, l, r, t, b)
-            if l ~= C.ICON_CROP[1] or r ~= C.ICON_CROP[2]
-                or t ~= C.ICON_CROP[3] or b ~= C.ICON_CROP[4] then
-                self:SetTexCoord(unpack(C.ICON_CROP))
-            end
-        end)
-    end
-
-    -- Hide named mask / border children
+    -- Hide named mask / border elements
     if button.IconMask then button.IconMask:Hide() end
     if button.Border then button.Border:SetAlpha(0) end
     if button.Stealable then button.Stealable:SetAlpha(0) end
