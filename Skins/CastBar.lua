@@ -8,6 +8,9 @@ ns.CastBarSkin = CastBarSkin
 local skinnedBars = {}
 local settingTexture = {}
 
+local _, playerClass = UnitClass("player")
+local classColor = (CUSTOM_CLASS_COLORS or RAID_CLASS_COLORS)[playerClass]
+
 local function StripGlowElements(castBar)
     -- Named glow/effect children that Blizzard re-applies via atlas
     local glowKeys = {
@@ -40,8 +43,9 @@ local function SkinCastBar(castBar)
     if not castBar or skinnedBars[castBar] then return end
     skinnedBars[castBar] = true
 
-    -- Flat bar texture
+    -- Flat bar texture, class-colored
     SE:SkinStatusBar(castBar)
+    castBar:SetStatusBarColor(classColor.r, classColor.g, classColor.b)
 
     -- Alpha-zero all unnamed texture regions, preserve fill and icon
     local fillTex = castBar:GetStatusBarTexture()
@@ -94,7 +98,7 @@ local function SkinCastBar(castBar)
         end
     end)
 
-    -- Re-apply on every cast event (Blizzard resets text position and decorations)
+    -- Re-apply on every cast event (Blizzard resets text position, decorations, and color)
     castBar:HookScript("OnEvent", function(self)
         StripGlowElements(self)
         if self.Border then self.Border:SetAlpha(0) end
@@ -104,6 +108,7 @@ local function SkinCastBar(castBar)
             self.Text:ClearAllPoints()
             self.Text:SetPoint("CENTER", self, "CENTER", 0, 0)
         end
+        self:SetStatusBarColor(classColor.r, classColor.g, classColor.b)
     end)
 
     -- Keep border shield hidden if re-shown
