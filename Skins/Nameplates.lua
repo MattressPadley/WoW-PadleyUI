@@ -20,8 +20,10 @@ local auraState = {}       -- keyed by UnitFrame → { buffCount = 0, debuffCoun
 
 -- Custom bars overlaid on Blizzard's (alpha-zeroed) bars
 local customHealthBars = {}   -- Blizzard healthBar → our StatusBar
-local customCastBars = {}     -- Blizzard castBar → { bar, icon, text }
+local customCastBars = {}     -- UnitFrame → { bar, icon, text, startTime, endTime, channel }
 local blizzardHealthColors = {} -- Blizzard healthBar → { r, g, b } (cached reaction color)
+local absorbBars = {}            -- UnitFrame → our absorb StatusBar
+local healCalcs = {}             -- UnitFrame → per-instance calculator
 
 -- Threat color tables
 -- nil = no override, use Blizzard's default reaction color
@@ -137,27 +139,84 @@ local function StyleFontString(fs)
     fs:SetShadowColor(unpack(C.SHADOW_COLOR))
 end
 
-local function UpdateCastBarInterruptColor(unitFrame)
-    local castBar = unitFrame.castBar
-    if not castBar or not unitFrame.unit then return end
-    local custom = customCastBars[castBar]
-    if not custom then return end
+local function ShowCustomCastBar(unitFrame, spellID, isChannelKnown)
+    local custom = customCastBars[unitFrame]
+    if not custom or not unitFrame.unit then return end
+    local unit = unitFrame.unit
 
-    local name, _, texture, _, _, _, _, ni = UnitCastingInfo(unitFrame.unit)
-    if type(name) == "nil" then
-        name, _, texture, _, _, _, ni = UnitChannelInfo(unitFrame.unit)
+    -- Get non-secret spell info from spellID (event args) when available
+    local spellName, spellIcon
+    if spellID then
+        local info = C_Spell.GetSpellInfo(spellID)
+        if info then
+            spellName = info.name
+            spellIcon = info.iconID
+        end
     end
-    if type(name) == "nil" then return end
 
-    -- Sync icon and text
-    if custom.icon and texture then custom.icon:SetTexture(texture) end
-    if custom.text then custom.text:SetText(name) end
+    -- Get timing from API — values are secret for nameplate units,
+    -- but widget APIs (SetMinMaxValues, SetValue, SetTexture, SetText) accept them
+    local startTimeMs, endTimeMs, notInterruptible
+    local isChannel
 
-    -- Color via secret-safe path: EvaluateColorValueFromBoolean(bool, trueVal, falseVal)
-    -- SetVertexColor on the fill texture accepts secret numbers and persists through SetValue
-    local r = C_CurveUtil.EvaluateColorValueFromBoolean(ni, 0.7, 1)
-    local b = C_CurveUtil.EvaluateColorValueFromBoolean(ni, 0.7, 0)
+    if isChannelKnown == true then
+        local n, _, t, s, e, _, ni = UnitChannelInfo(unit)
+        startTimeMs, endTimeMs, notInterruptible = s, e, ni
+        isChannel = true
+        if not spellName then spellName = n end
+        if not spellIcon then spellIcon = t end
+    elseif isChannelKnown == false then
+        local n, _, t, s, e, _, _, ni = UnitCastingInfo(unit)
+        startTimeMs, endTimeMs, notInterruptible = s, e, ni
+        isChannel = false
+        if not spellName then spellName = n end
+        if not spellIcon then spellIcon = t end
+    else
+        -- RefreshNamePlate path: detect cast type
+        local cn, _, ct, cs, ce, _, _, cni = UnitCastingInfo(unit)
+        if cs then
+            startTimeMs, endTimeMs, notInterruptible = cs, ce, cni
+            isChannel = false
+            spellName, spellIcon = cn, ct
+        else
+            local hn, _, ht, hs, he, _, hni = UnitChannelInfo(unit)
+            if hs then
+                startTimeMs, endTimeMs, notInterruptible = hs, he, hni
+                isChannel = true
+                spellName, spellIcon = hn, ht
+            else
+                return
+            end
+        end
+    end
+
+    -- Widget APIs accept secret values — no Lua arithmetic needed
+    if custom.icon then custom.icon:SetTexture(spellIcon) end
+    if custom.text and spellName then custom.text:SetText(spellName) end
+
+    -- Pass secret ms values directly to widget; SetValue with non-secret GetTime()*1000
+    custom.bar:SetMinMaxValues(startTimeMs, endTimeMs)
+    custom.bar:SetReverseFill(isChannel)
+    custom.bar:SetValue(GetTime() * 1000)
+
+    -- OnUpdate: GetTime()*1000 is non-secret; SetValue clamps to min/max internally
+    custom.bar:SetScript("OnUpdate", function(self)
+        self:SetValue(GetTime() * 1000)
+    end)
+
+    -- Secret-safe color via EvaluateColorValueFromBoolean (handles secret booleans)
+    local r = C_CurveUtil.EvaluateColorValueFromBoolean(notInterruptible, 0.7, 1)
+    local b = C_CurveUtil.EvaluateColorValueFromBoolean(notInterruptible, 0.7, 0)
     custom.bar:GetStatusBarTexture():SetVertexColor(r, 0.7, b)
+
+    custom.container:Show()
+end
+
+local function HideCustomCastBar(unitFrame)
+    local custom = customCastBars[unitFrame]
+    if not custom then return end
+    custom.bar:SetScript("OnUpdate", nil)
+    custom.container:Hide()
 end
 
 local function SkinHealthBar(unitFrame)
@@ -188,7 +247,26 @@ local function SkinHealthBar(unitFrame)
         bg:SetColorTexture(C.BACKDROP_COLOR[1], C.BACKDROP_COLOR[2],
                            C.BACKDROP_COLOR[3], C.BACKDROP_COLOR[4])
 
-        -- Mirror progress
+        -- Per-unitFrame heal prediction calculator (pcall in case API unavailable)
+        pcall(function()
+            local calc = CreateUnitHealPredictionCalculator()
+            calc:SetMaximumHealthMode(Enum.UnitMaximumHealthMode.WithAbsorbs)
+            calc:SetDamageAbsorbClampMode(Enum.UnitDamageAbsorbClampMode.MaximumHealth)
+            healCalcs[unitFrame] = calc
+        end)
+
+        -- Absorb bar (behind health bar, like Platynator's layout)
+        local absorbBar = CreateFrame("StatusBar", nil, bar)
+        absorbBar:SetStatusBarTexture(C.BAR_TEXTURE)
+        absorbBar:GetStatusBarTexture():SetVertexColor(1, 1, 1, 0.35)
+        absorbBar:SetPoint("LEFT", bar:GetStatusBarTexture(), "RIGHT")
+        absorbBar:SetPoint("TOP", bar, "TOP")
+        absorbBar:SetPoint("BOTTOM", bar, "BOTTOM")
+        absorbBar:SetFrameLevel(bar:GetFrameLevel() - 1)
+        absorbBar:SetClipsChildren(true)
+        absorbBars[unitFrame] = absorbBar
+
+        -- Mirror progress from Blizzard's healthBar to our custom bar
         hooksecurefunc(healthBar, "SetMinMaxValues", function(self, min, max)
             local c = customHealthBars[self]
             if c then c:SetMinMaxValues(min, max) end
@@ -219,82 +297,77 @@ local function SkinHealthBar(unitFrame)
     end
 end
 
+local neutralizedCastBars = {} -- castBar → true (already neutralized)
+local hiddenFrame = CreateFrame("Frame")
+hiddenFrame:Hide()
+
 local function SkinCastBar(unitFrame)
     local castBar = unitFrame.castBar
     if not castBar then return end
 
-    -- Alpha-zero ALL regions on Blizzard's cast bar
-    for i = 1, castBar:GetNumRegions() do
-        local region = select(i, castBar:GetRegions())
-        if region then region:SetAlpha(0) end
+    -- Always neutralize Blizzard's castBar (even before custom HB exists)
+    if not neutralizedCastBars[castBar] then
+        neutralizedCastBars[castBar] = true
+        castBar:UnregisterAllEvents()
+        -- Reparent to a hidden frame — strictly stronger than alpha-zero.
+        -- Even if Blizzard calls Show() or SetAlpha(1), the frame stays
+        -- invisible because its parent is hidden.
+        castBar:SetParent(hiddenFrame)
     end
-    if castBar.BorderShield then castBar.BorderShield:SetAlpha(0) end
-    if castBar.Text then castBar.Text:SetAlpha(0) end
 
-    -- Never call castBar:SetSize() — taints dimensions, causing secret values
-    -- in BorderShield's Backdrop.lua when secure code queries GetSize()
-    local healthBar = unitFrame.healthBar
+    if customCastBars[unitFrame] then return end
 
-    if not hookedBars[castBar] then
-        hookedBars[castBar] = true
+    local customHB = customHealthBars[unitFrame.healthBar]
+    if not customHB then return end
 
-        local barWidth = ns.Config:Get("nameplates", "width")
-        local barHeight = ns.Config:Get("nameplates", "height")
-        local iconSize = barHeight
-        local iconGap = 2
+    local plate = unitFrame:GetParent()
 
-        -- Our own StatusBar, child of Blizzard's castBar (inherits show/hide)
-        local bar = CreateFrame("StatusBar", nil, castBar)
-        bar:SetStatusBarTexture(C.BAR_TEXTURE)
-        bar:SetPoint("TOPLEFT", castBar, "TOPLEFT", iconSize + iconGap, 0)
-        bar:SetSize(barWidth - iconSize - iconGap, barHeight)
-        bar:SetFrameLevel(castBar:GetFrameLevel() + 2)
+    local barWidth = ns.Config:Get("nameplates", "width")
+    local barHeight = ns.Config:Get("nameplates", "height")
+    local iconSize = barHeight
+    local iconGap = 2
 
-        -- Backdrop
-        local bg = bar:CreateTexture(nil, "BACKGROUND")
-        bg:SetAllPoints()
-        bg:SetColorTexture(C.BACKDROP_COLOR[1], C.BACKDROP_COLOR[2],
+    -- Container frame parented to nameplate (not castBar) — fully addon-owned
+    local container = CreateFrame("Frame", nil, plate)
+    container:SetPoint("TOPLEFT", customHB, "BOTTOMLEFT", 0, -2)
+    container:SetSize(barWidth, barHeight)
+    container:SetFrameLevel(castBar:GetFrameLevel() + 2)
+    container:Hide()
+
+    -- Our own StatusBar, addon-owned — no taint
+    local bar = CreateFrame("StatusBar", nil, container)
+    bar:SetStatusBarTexture(C.BAR_TEXTURE)
+    bar:SetPoint("TOPLEFT", container, "TOPLEFT", iconSize + iconGap, 0)
+    bar:SetSize(barWidth - iconSize - iconGap, barHeight)
+
+    -- Backdrop
+    local bg = bar:CreateTexture(nil, "BACKGROUND")
+    bg:SetAllPoints()
+    bg:SetColorTexture(C.BACKDROP_COLOR[1], C.BACKDROP_COLOR[2],
+                       C.BACKDROP_COLOR[3], C.BACKDROP_COLOR[4])
+
+    -- Spell icon (square, left of bar)
+    local icon = bar:CreateTexture(nil, "ARTWORK")
+    icon:SetSize(iconSize, iconSize)
+    icon:SetPoint("TOPRIGHT", bar, "TOPLEFT", -iconGap, 0)
+    icon:SetTexCoord(unpack(C.ICON_CROP))
+
+    -- Icon backdrop
+    local iconBg = bar:CreateTexture(nil, "BACKGROUND")
+    iconBg:SetPoint("TOPLEFT", icon, "TOPLEFT")
+    iconBg:SetPoint("BOTTOMRIGHT", icon, "BOTTOMRIGHT")
+    iconBg:SetColorTexture(C.BACKDROP_COLOR[1], C.BACKDROP_COLOR[2],
                            C.BACKDROP_COLOR[3], C.BACKDROP_COLOR[4])
 
-        -- Spell icon (square, left of bar)
-        local icon = bar:CreateTexture(nil, "ARTWORK")
-        icon:SetSize(iconSize, iconSize)
-        icon:SetPoint("TOPRIGHT", bar, "TOPLEFT", -iconGap, 0)
-        icon:SetTexCoord(unpack(C.ICON_CROP))
+    -- Spell name text
+    local text = bar:CreateFontString(nil, "OVERLAY")
+    text:SetPoint("LEFT", bar, "LEFT", 4, 0)
+    text:SetPoint("RIGHT", bar, "RIGHT", -4, 0)
+    text:SetJustifyH("CENTER")
+    text:SetWordWrap(false)
+    StyleFontString(text)
 
-        -- Icon backdrop
-        local iconBg = bar:CreateTexture(nil, "BACKGROUND")
-        iconBg:SetPoint("TOPLEFT", icon, "TOPLEFT")
-        iconBg:SetPoint("BOTTOMRIGHT", icon, "BOTTOMRIGHT")
-        iconBg:SetColorTexture(C.BACKDROP_COLOR[1], C.BACKDROP_COLOR[2],
-                               C.BACKDROP_COLOR[3], C.BACKDROP_COLOR[4])
-
-        -- Spell name text
-        local text = bar:CreateFontString(nil, "OVERLAY")
-        text:SetPoint("LEFT", bar, "LEFT", 4, 0)
-        text:SetPoint("RIGHT", bar, "RIGHT", -4, 0)
-        text:SetJustifyH("CENTER")
-        text:SetWordWrap(false)
-        StyleFontString(text)
-
-        customCastBars[castBar] = { bar = bar, icon = icon, text = text }
-
-        -- Mirror progress
-        hooksecurefunc(castBar, "SetMinMaxValues", function(self, min, max)
-            local c = customCastBars[self]
-            if c then c.bar:SetMinMaxValues(min, max) end
-        end)
-        hooksecurefunc(castBar, "SetValue", function(self, val)
-            local c = customCastBars[self]
-            if c then c.bar:SetValue(val) end
-        end)
-
-        -- Keep Blizzard's fill invisible on texture changes
-        hooksecurefunc(castBar, "SetStatusBarTexture", function(self)
-            local tex = self:GetStatusBarTexture()
-            if tex then tex:SetAlpha(0) end
-        end)
-    end
+    customCastBars[unitFrame] = { bar = bar, icon = icon, text = text, container = container }
 end
 
 local function CleanupChrome(unitFrame)
@@ -599,14 +672,38 @@ local function CreateHoverBorder(unitFrame)
     if not custom or hoverBorders[unitFrame] then return end
 
     local plate = unitFrame:GetParent()
+    local borderSize = 2
 
-    local border = CreateFrame("Frame", nil, plate, "BackdropTemplate")
+    local border = CreateFrame("Frame", nil, plate)
     border:EnableMouse(false)
     border:SetFrameLevel(custom:GetFrameLevel() + 1)
-    border:SetPoint("TOPLEFT", custom, "TOPLEFT", -2, 2)
-    border:SetPoint("BOTTOMRIGHT", custom, "BOTTOMRIGHT", 2, -2)
-    border:SetBackdrop({ edgeFile = "Interface\\Buttons\\WHITE8x8", edgeSize = 2 })
-    border:SetBackdropBorderColor(1, 1, 1, 1)
+    border:SetPoint("TOPLEFT", custom, "TOPLEFT", -borderSize, borderSize)
+    border:SetPoint("BOTTOMRIGHT", custom, "BOTTOMRIGHT", borderSize, -borderSize)
+
+    local top = border:CreateTexture(nil, "BORDER")
+    top:SetColorTexture(1, 1, 1, 1)
+    top:SetPoint("TOPLEFT")
+    top:SetPoint("TOPRIGHT")
+    top:SetHeight(borderSize)
+
+    local bottom = border:CreateTexture(nil, "BORDER")
+    bottom:SetColorTexture(1, 1, 1, 1)
+    bottom:SetPoint("BOTTOMLEFT")
+    bottom:SetPoint("BOTTOMRIGHT")
+    bottom:SetHeight(borderSize)
+
+    local left = border:CreateTexture(nil, "BORDER")
+    left:SetColorTexture(1, 1, 1, 1)
+    left:SetPoint("TOPLEFT", top, "BOTTOMLEFT")
+    left:SetPoint("BOTTOMLEFT", bottom, "TOPLEFT")
+    left:SetWidth(borderSize)
+
+    local right = border:CreateTexture(nil, "BORDER")
+    right:SetColorTexture(1, 1, 1, 1)
+    right:SetPoint("TOPRIGHT", top, "BOTTOMRIGHT")
+    right:SetPoint("BOTTOMRIGHT", bottom, "TOPRIGHT")
+    right:SetWidth(borderSize)
+
     border:Hide()
 
     hoverBorders[unitFrame] = border
@@ -646,11 +743,11 @@ local function RefreshAllHoverBorders()
 end
 
 local function CreateKickOverlay(unitFrame)
-    local custom = customHealthBars[unitFrame.healthBar]
-    local castBar = unitFrame.castBar
-    if not custom or not castBar or kickOverlays[unitFrame] then return end
+    local customHB = customHealthBars[unitFrame.healthBar]
+    if not customHB or kickOverlays[unitFrame] then return end
 
     local plate = unitFrame:GetParent()
+    local castBar = unitFrame.castBar
 
     local barWidth = ns.Config:Get("nameplates", "width")
     local barHeight = ns.Config:Get("nameplates", "height")
@@ -660,9 +757,9 @@ local function CreateKickOverlay(unitFrame)
     -- Container frame parented to the nameplate (not castBar) so it stays visible
     -- when Blizzard hides castBar on interrupt
     local frame = CreateFrame("Frame", nil, plate)
-    frame:SetPoint("TOPLEFT", castBar, "TOPLEFT")
+    frame:SetPoint("TOPLEFT", customHB, "BOTTOMLEFT", 0, -2)
     frame:SetSize(barWidth, barHeight)
-    frame:SetFrameLevel(castBar:GetFrameLevel() + 4)
+    frame:SetFrameLevel((castBar and castBar:GetFrameLevel() or 5) + 4)
     frame:Hide()
 
     -- Status bar (always full, dark red)
@@ -951,6 +1048,43 @@ local function UpdateAuras(unitFrame)
     UpdateQuestIndicatorPosition(unitFrame)
 end
 
+local function UpdateAbsorbs(unitFrame)
+    local absorbBar = absorbBars[unitFrame]
+    if not absorbBar or not unitFrame.unit then return end
+    local customHB = customHealthBars[unitFrame.healthBar]
+    local calc = healCalcs[unitFrame]
+    if not customHB or not calc then
+        if absorbBar then absorbBar:Hide() end
+        return
+    end
+
+    -- All calculator values may be secret — pcall guards all arithmetic/comparison
+    local ok, absorbs, maxWithAbsorbs = pcall(function()
+        UnitGetDetailedHealPrediction(unitFrame.unit, nil, calc)
+        calc:SetMaximumHealthMode(Enum.UnitMaximumHealthMode.WithAbsorbs)
+        local mwa = calc:GetMaximumHealth()
+        local ab = calc:GetDamageAbsorbs()
+        -- Force arithmetic to detect secrets (throws on secret values)
+        return ab + 0, mwa + 0
+    end)
+
+    if ok and absorbs and absorbs > 0 and maxWithAbsorbs and maxWithAbsorbs > 0 then
+        -- Adjust both bars to the health+absorb range
+        customHB:SetMinMaxValues(0, maxWithAbsorbs)
+        absorbBar:SetMinMaxValues(0, maxWithAbsorbs)
+        -- Health value: read from Blizzard's bar (already resolved, non-secret)
+        customHB:SetValue(unitFrame.healthBar:GetValue())
+        absorbBar:SetValue(absorbs)
+        absorbBar:Show()
+    else
+        absorbBar:Hide()
+        -- Restore health bar to standard range (hooks keep it in sync)
+        local min, max = unitFrame.healthBar:GetMinMaxValues()
+        customHB:SetMinMaxValues(min, max)
+        customHB:SetValue(unitFrame.healthBar:GetValue())
+    end
+end
+
 local function IsNamePlateUnit(unitId)
     return unitId and unitId:sub(1, 9) == "nameplate"
 end
@@ -988,8 +1122,12 @@ local function RefreshNamePlate(unitFrame)
         local r, g, b = unitFrame.healthBar:GetStatusBarColor()
         blizzardHealthColors[unitFrame.healthBar] = { r, g, b }
     end
+    UpdateAbsorbs(unitFrame)
     UpdateThreatColor(unitFrame)
-    UpdateCastBarInterruptColor(unitFrame)
+    -- ShowCustomCastBar auto-detects cast/channel and bails if neither
+    if unitFrame.unit then
+        ShowCustomCastBar(unitFrame)
+    end
     -- Keep Blizzard's name hidden, sync text to our overlay
     if unitFrame.name then
         unitFrame.name:SetAlpha(0)
@@ -1007,11 +1145,24 @@ function NameplateSkin:ResizeAll()
     for _, bar in pairs(customHealthBars) do
         bar:SetSize(w, h)
     end
+    -- Re-anchor absorb bars after health bar resize
+    for unitFrame, absorbBar in pairs(absorbBars) do
+        local customHB = customHealthBars[unitFrame.healthBar]
+        if customHB then
+            absorbBar:SetPoint("LEFT", customHB:GetStatusBarTexture(), "RIGHT")
+        end
+    end
     -- Resize cast bars to match
     local iconGap = 2
-    for _, custom in pairs(customCastBars) do
+    for unitFrame, custom in pairs(customCastBars) do
+        local customHB = customHealthBars[unitFrame.healthBar]
+        if customHB and custom.container then
+            custom.container:ClearAllPoints()
+            custom.container:SetPoint("TOPLEFT", customHB, "BOTTOMLEFT", 0, -2)
+            custom.container:SetSize(w, h)
+        end
         custom.bar:ClearAllPoints()
-        custom.bar:SetPoint("TOPLEFT", custom.bar:GetParent(), "TOPLEFT", h + iconGap, 0)
+        custom.bar:SetPoint("TOPLEFT", custom.container or custom.bar:GetParent(), "TOPLEFT", h + iconGap, 0)
         custom.bar:SetSize(w - h - iconGap, h)
         custom.icon:SetSize(h, h)
     end
@@ -1079,7 +1230,12 @@ function NameplateSkin:Apply()
     eventFrame:RegisterEvent("UNIT_SPELLCAST_INTERRUPTIBLE")
     eventFrame:RegisterEvent("UNIT_SPELLCAST_NOT_INTERRUPTIBLE")
     eventFrame:RegisterEvent("UNIT_SPELLCAST_INTERRUPTED")
+    eventFrame:RegisterEvent("UNIT_SPELLCAST_STOP")
+    eventFrame:RegisterEvent("UNIT_SPELLCAST_CHANNEL_STOP")
     eventFrame:RegisterEvent("UNIT_AURA")
+    eventFrame:RegisterEvent("UNIT_HEALTH")
+    eventFrame:RegisterEvent("UNIT_MAXHEALTH")
+    eventFrame:RegisterEvent("UNIT_ABSORB_AMOUNT_CHANGED")
     eventFrame:RegisterEvent("NAME_PLATE_UNIT_REMOVED")
     eventFrame:SetScript("OnEvent", function(self, event, ...)
         if event == "NAME_PLATE_CREATED" then
@@ -1130,11 +1286,20 @@ function NameplateSkin:Apply()
             RefreshAllHoverBorders()
         elseif event == "UNIT_SPELLCAST_START"
             or event == "UNIT_SPELLCAST_CHANNEL_START" then
+            local unitId, _, spellID = ...
+            if not IsNamePlateUnit(unitId) then return end
+            local plate = C_NamePlate.GetNamePlateForUnit(unitId)
+            if plate and plate.UnitFrame and skinnedFrames[plate.UnitFrame] then
+                local isChannel = (event == "UNIT_SPELLCAST_CHANNEL_START")
+                ShowCustomCastBar(plate.UnitFrame, spellID, isChannel)
+            end
+        elseif event == "UNIT_SPELLCAST_STOP"
+            or event == "UNIT_SPELLCAST_CHANNEL_STOP" then
             local unitId = ...
             if not IsNamePlateUnit(unitId) then return end
             local plate = C_NamePlate.GetNamePlateForUnit(unitId)
             if plate and plate.UnitFrame and skinnedFrames[plate.UnitFrame] then
-                UpdateCastBarInterruptColor(plate.UnitFrame)
+                HideCustomCastBar(plate.UnitFrame)
             end
         elseif event == "UNIT_SPELLCAST_INTERRUPTIBLE"
             or event == "UNIT_SPELLCAST_NOT_INTERRUPTIBLE" then
@@ -1143,7 +1308,7 @@ function NameplateSkin:Apply()
             if not IsNamePlateUnit(unitId) then return end
             local plate = C_NamePlate.GetNamePlateForUnit(unitId)
             if plate and plate.UnitFrame and skinnedFrames[plate.UnitFrame] then
-                local custom = customCastBars[plate.UnitFrame.castBar]
+                local custom = customCastBars[plate.UnitFrame]
                 if custom then
                     local r, g, b
                     if event == "UNIT_SPELLCAST_NOT_INTERRUPTIBLE" then
@@ -1162,10 +1327,11 @@ function NameplateSkin:Apply()
                 and interrupterGUID then
                 local name = UnitNameFromGUID(interrupterGUID)
                 if name then
-                    local custom = customCastBars[plate.UnitFrame.castBar]
+                    local custom = customCastBars[plate.UnitFrame]
                     local texture = custom and custom.icon and custom.icon:GetTexture()
                     ShowKickOverlay(plate.UnitFrame, name, texture)
                 end
+                HideCustomCastBar(plate.UnitFrame)
             end
         elseif event == "UNIT_AURA" then
             local unitId = ...
@@ -1174,9 +1340,24 @@ function NameplateSkin:Apply()
             if plate and plate.UnitFrame and skinnedFrames[plate.UnitFrame] then
                 UpdateAuras(plate.UnitFrame)
             end
+        elseif event == "UNIT_HEALTH" or event == "UNIT_MAXHEALTH"
+            or event == "UNIT_ABSORB_AMOUNT_CHANGED" then
+            local unitId = ...
+            if not IsNamePlateUnit(unitId) then return end
+            local plate = C_NamePlate.GetNamePlateForUnit(unitId)
+            if plate and plate.UnitFrame and skinnedFrames[plate.UnitFrame] then
+                UpdateAbsorbs(plate.UnitFrame)
+            end
         elseif event == "NAME_PLATE_UNIT_REMOVED" then
             local unitId = ...
             local plate = C_NamePlate.GetNamePlateForUnit(unitId)
+            -- Reparent Blizzard castBar back so the nameplate can be reused cleanly
+            if plate and plate.UnitFrame and neutralizedCastBars[plate.UnitFrame.castBar] then
+                plate.UnitFrame.castBar:SetParent(plate.UnitFrame)
+            end
+            if plate and plate.UnitFrame then
+                HideCustomCastBar(plate.UnitFrame)
+            end
             if plate and plate.UnitFrame and auraFrames[plate.UnitFrame] then
                 local frames = auraFrames[plate.UnitFrame]
                 for i = 1, MAX_BUFFS do frames.buffs[i].frame:Hide() end

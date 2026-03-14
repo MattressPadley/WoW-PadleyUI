@@ -280,10 +280,13 @@ local function SkinHealthBar(bar, unit, cfg)
         end
     end
 
-    -- Create background, remove Blizzard masks, size bar to match background
+    -- Create background, remove Blizzard masks, size bar via anchoring (not SetSize — taints dimensions)
     CreateBarBackground(bar)
     RemoveBarMasks(bar)
-    bar:SetSize(cfg.width, cfg.height)
+    local anchor = bar:GetParent() or bar
+    bar:ClearAllPoints()
+    bar:SetPoint("TOPLEFT", anchor, "TOPLEFT", cfg.startX or 0, cfg.startY or 0)
+    bar:SetPoint("BOTTOMRIGHT", anchor, "TOPLEFT", (cfg.startX or 0) + cfg.width, (cfg.startY or 0) - cfg.height)
 
     frameUnits[bar] = unit
     ApplyHealthColor(bar)
@@ -340,10 +343,13 @@ local function SkinPowerBar(bar, unit, cfg)
         end
     end
 
-    -- Create background, remove Blizzard masks, size bar to match background
+    -- Create background, remove Blizzard masks, size bar via anchoring (not SetSize — taints dimensions)
     CreateBarBackground(bar)
     RemoveBarMasks(bar)
-    bar:SetSize(cfg.width, cfg.height)
+    local anchor = bar:GetParent() or bar
+    bar:ClearAllPoints()
+    bar:SetPoint("TOPLEFT", anchor, "TOPLEFT", cfg.startX or 0, cfg.startY or 0)
+    bar:SetPoint("BOTTOMRIGHT", anchor, "TOPLEFT", (cfg.startX or 0) + cfg.width, (cfg.startY or 0) - cfg.height)
 
     powerBarUnits[bar] = unit
     ApplyPowerColor(bar)
@@ -359,12 +365,13 @@ local function SkinPowerBar(bar, unit, cfg)
             ApplyPowerColor(self)
         end)
 
-        -- Enforce our width when Blizzard resets it
-        local enforceWidth = cfg.width
-        hooksecurefunc(bar, "SetWidth", function(self, w)
-            if w ~= enforceWidth then
-                self:SetWidth(enforceWidth)
-            end
+        -- Re-anchor when Blizzard resets points (safe alternative to SetWidth in a hook)
+        local enforceCfg = cfg
+        hooksecurefunc(bar, "SetWidth", function(self)
+            local a = self:GetParent() or self
+            self:ClearAllPoints()
+            self:SetPoint("TOPLEFT", a, "TOPLEFT", enforceCfg.startX or 0, enforceCfg.startY or 0)
+            self:SetPoint("BOTTOMRIGHT", a, "TOPLEFT", (enforceCfg.startX or 0) + enforceCfg.width, (enforceCfg.startY or 0) - enforceCfg.height)
         end)
     end
 

@@ -20,16 +20,25 @@ local FADE_IN_TIME = 0.2
 local FADE_OUT_TIME = 0.3
 local FADE_OUT_DELAY = 0.15
 
+-- External tracking tables — never write keys to Blizzard frames
+local fadeState = {}  -- bar -> { fading = targetAlpha, timer = ticker }
+
 local function FadeBar(bar, targetAlpha)
-    if bar._padleyFading == targetAlpha then return end
-    bar._padleyFading = targetAlpha
-    if bar._padleyFadeTimer then bar._padleyFadeTimer:Cancel() end
+    local state = fadeState[bar]
+    if state and state.fading == targetAlpha then return end
+    if not state then
+        state = {}
+        fadeState[bar] = state
+    end
+    state.fading = targetAlpha
+    if state.timer then state.timer:Cancel() end
     if targetAlpha == 1 then
         UIFrameFadeIn(bar, FADE_IN_TIME, bar:GetAlpha(), 1)
+        state.timer = nil
     else
-        bar._padleyFadeTimer = C_Timer.NewTimer(FADE_OUT_DELAY, function()
+        state.timer = C_Timer.NewTimer(FADE_OUT_DELAY, function()
             UIFrameFadeOut(bar, FADE_OUT_TIME, bar:GetAlpha(), 0)
-            bar._padleyFadeTimer = nil
+            state.timer = nil
         end)
     end
 end
@@ -252,8 +261,11 @@ local function SetMouseoverMode(enabled)
     for _, barDef in ipairs(ACTION_BARS) do
         local bar = _G[barDef.bar]
         if bar then
-            if bar._padleyFadeTimer then bar._padleyFadeTimer:Cancel() end
-            bar._padleyFading = nil
+            local state = fadeState[bar]
+            if state then
+                if state.timer then state.timer:Cancel() end
+                fadeState[bar] = nil
+            end
             UIFrameFadeRemoveFrame(bar)
             bar:SetAlpha(enabled and 0 or 1)
         end
