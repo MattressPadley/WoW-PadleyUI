@@ -369,15 +369,103 @@ function Config:CreateConfigPanel()
     --------------------------------------------------------------------------
     local blacklistContent = CreateTab("Blacklist", 2)
 
+    -- Add-spell input row
+    local inputRow = CreateFrame("Frame", nil, blacklistContent)
+    inputRow:SetPoint("TOPLEFT", 12, -10)
+    inputRow:SetPoint("RIGHT", blacklistContent, "RIGHT", -12, 0)
+    inputRow:SetHeight(24)
+
+    local inputBox = CreateFrame("EditBox", nil, inputRow, "BackdropTemplate")
+    inputBox:SetPoint("TOPLEFT", 0, 0)
+    inputBox:SetPoint("RIGHT", inputRow, "RIGHT", -50, 0)
+    inputBox:SetHeight(22)
+    inputBox:SetBackdrop({ bgFile = C.FLAT_BACKDROP.bgFile })
+    inputBox:SetBackdropColor(0.1, 0.1, 0.1, 0.8)
+    inputBox:SetFont(C.FONT, C.FONT_SIZE, "")
+    inputBox:SetShadowOffset(C.SHADOW_OFFSET[1], C.SHADOW_OFFSET[2])
+    inputBox:SetShadowColor(unpack(C.SHADOW_COLOR))
+    inputBox:SetTextColor(1, 1, 1)
+    inputBox:SetTextInsets(6, 6, 0, 0)
+    inputBox:SetAutoFocus(false)
+    inputBox:SetMaxLetters(64)
+
+    -- Placeholder text
+    local placeholder = inputBox:CreateFontString(nil, "ARTWORK")
+    placeholder:SetFont(C.FONT, C.FONT_SIZE, "")
+    placeholder:SetShadowOffset(C.SHADOW_OFFSET[1], C.SHADOW_OFFSET[2])
+    placeholder:SetShadowColor(unpack(C.SHADOW_COLOR))
+    placeholder:SetPoint("LEFT", 6, 0)
+    placeholder:SetTextColor(0.4, 0.4, 0.4)
+    placeholder:SetText("Spell ID or name...")
+    inputBox:HookScript("OnTextChanged", function(self)
+        placeholder:SetShown(self:GetText() == "")
+    end)
+
+    local addBtn = CreateFrame("Button", nil, inputRow, "BackdropTemplate")
+    addBtn:SetSize(44, 22)
+    addBtn:SetPoint("LEFT", inputBox, "RIGHT", 4, 0)
+    addBtn:SetBackdrop({ bgFile = C.FLAT_BACKDROP.bgFile })
+    addBtn:SetBackdropColor(C.HEADER_COLOR[1], C.HEADER_COLOR[2],
+                             C.HEADER_COLOR[3], C.HEADER_COLOR[4])
+    local addLabel = addBtn:CreateFontString(nil, "OVERLAY")
+    addLabel:SetFont(C.FONT, C.FONT_SIZE, "")
+    addLabel:SetShadowOffset(C.SHADOW_OFFSET[1], C.SHADOW_OFFSET[2])
+    addLabel:SetShadowColor(unpack(C.SHADOW_COLOR))
+    addLabel:SetPoint("CENTER", 0, 0)
+    addLabel:SetText("Add")
+    addLabel:SetTextColor(0.9, 0.9, 0.9)
+    addBtn:HookScript("OnEnter", function()
+        addBtn:SetBackdropColor(C.HIGHLIGHT_COLOR[1], C.HIGHLIGHT_COLOR[2],
+                                 C.HIGHLIGHT_COLOR[3], C.HIGHLIGHT_COLOR[4])
+    end)
+    addBtn:HookScript("OnLeave", function()
+        addBtn:SetBackdropColor(C.HEADER_COLOR[1], C.HEADER_COLOR[2],
+                                 C.HEADER_COLOR[3], C.HEADER_COLOR[4])
+    end)
+
+    local function TryAddSpell()
+        local text = inputBox:GetText():trim()
+        if text == "" then return end
+
+        local spellId = tonumber(text)
+        if spellId then
+            -- Numeric input — look up by spell ID
+            local info = C_Spell.GetSpellInfo(spellId)
+            if not info then
+                print("|cff00ccffPadleyUI:|r Unknown spell ID: " .. text)
+                return
+            end
+            local icon = C_Spell.GetSpellTexture(spellId)
+            self:AddToAuraBlacklist(spellId, info.name, icon, "debuff")
+            print("|cff00ccffPadleyUI:|r Blacklisted " .. info.name .. " (" .. spellId .. ")")
+        else
+            -- Text input — search by name
+            local info = C_Spell.GetSpellInfo(text)
+            if not info then
+                print("|cff00ccffPadleyUI:|r Unknown spell: " .. text)
+                return
+            end
+            local icon = C_Spell.GetSpellTexture(info.spellID)
+            self:AddToAuraBlacklist(info.spellID, info.name, icon, "debuff")
+            print("|cff00ccffPadleyUI:|r Blacklisted " .. info.name .. " (" .. info.spellID .. ")")
+        end
+        inputBox:SetText("")
+        inputBox:ClearFocus()
+    end
+
+    addBtn:SetScript("OnClick", TryAddSpell)
+    inputBox:SetScript("OnEnterPressed", TryAddSpell)
+    inputBox:SetScript("OnEscapePressed", function(self) self:ClearFocus() end)
+
     local blHeader = blacklistContent:CreateFontString(nil, "OVERLAY")
     blHeader:SetFont(C.FONT, C.FONT_SIZE_SMALL, "")
     blHeader:SetShadowOffset(C.SHADOW_OFFSET[1], C.SHADOW_OFFSET[2])
     blHeader:SetShadowColor(unpack(C.SHADOW_COLOR))
-    blHeader:SetPoint("TOPLEFT", 12, -10)
+    blHeader:SetPoint("TOPLEFT", inputRow, "BOTTOMLEFT", 0, -6)
     blHeader:SetPoint("RIGHT", blacklistContent, "RIGHT", -12, 0)
-    blHeader:SetTextColor(0.6, 0.6, 0.6)
+    blHeader:SetTextColor(0.4, 0.4, 0.4)
     blHeader:SetWordWrap(true)
-    blHeader:SetText("Ctrl+Alt+Shift+Right-click auras on nameplates to add. Right-click below to remove.")
+    blHeader:SetText("Right-click to remove.")
 
     -- List layout
     local ROW_HEIGHT = 20
@@ -513,7 +601,7 @@ function Config:CreateConfigPanel()
     SelectTab(1)
 
     -- Make panel taller to accommodate tabs
-    panel:SetSize(320, 260)
+    panel:SetSize(320, 300)
 
     self.panel = panel
 end

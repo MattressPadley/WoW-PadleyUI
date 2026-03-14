@@ -848,29 +848,6 @@ local function CreateAuraIcon(parent, level, iconSize, filter)
         GameTooltip:Hide()
     end)
 
-    -- Ctrl+Alt+Shift+RightClick to blacklist
-    frame:RegisterForClicks("RightButtonUp")
-    frame:SetScript("OnClick", function(self)
-        if not IsControlKeyDown() or not IsAltKeyDown() or not IsShiftKeyDown() then return end
-        if not self.auraUnit or not self.auraInstanceID then return end
-        -- Use a hidden tooltip to extract the spellId (aura fields are secret)
-        scanTip:SetOwner(WorldFrame, "ANCHOR_NONE")
-        if self.auraFilter == "HELPFUL" then
-            scanTip:SetUnitBuffByAuraInstanceID(self.auraUnit, self.auraInstanceID)
-        else
-            scanTip:SetUnitDebuffByAuraInstanceID(self.auraUnit, self.auraInstanceID)
-        end
-        local data = scanTip:GetTooltipData()
-        scanTip:Hide()
-        if data and data.id then
-            local name = data.lines and data.lines[1] and data.lines[1].leftText or ("Spell " .. data.id)
-            local icon = C_Spell.GetSpellTexture(data.id)
-            local auraType = self.auraFilter == "HELPFUL" and "buff" or "debuff"
-            ns.Config:AddToAuraBlacklist(data.id, name, icon, auraType)
-            print("|cff00ccffPadleyUI:|r Blacklisted " .. name)
-        end
-    end)
-
     local bg = frame:CreateTexture(nil, "BACKGROUND")
     bg:SetAllPoints()
     bg:SetColorTexture(C.BACKDROP_COLOR[1], C.BACKDROP_COLOR[2],
@@ -910,7 +887,9 @@ local function CreateAuraFrames(unitFrame)
     if not custom or auraFrames[unitFrame] then return end
 
     local plate = unitFrame:GetParent()
-    local iconSize = math.max(custom:GetHeight(), 14)
+    local height = custom:GetHeight()
+    if issecretvalue and issecretvalue(height) then height = 14 end
+    local iconSize = math.max(height, 14)
     local level = custom:GetFrameLevel() + 3
 
     local buffs = {}
@@ -945,19 +924,12 @@ local function CreateAuraFrames(unitFrame)
     auraState[unitFrame] = { buffCount = 0, debuffCount = 0, ccCount = 0 }
 end
 
--- Blacklist check using IsAuraFilteredOutByInstanceID (secret-value safe, no pcall needed)
--- We create a custom filter string per blacklisted spell — but since we can't embed spell IDs
--- in filter strings, we use pcall + tooltip ID extraction as fallback.
-local function IsAuraBlacklisted(blacklist, unit, instanceID, filter)
-    local info
-    if filter == "HELPFUL" then
-        info = C_TooltipInfo.GetUnitBuffByAuraInstanceID(unit, instanceID)
-    else
-        info = C_TooltipInfo.GetUnitDebuffByAuraInstanceID(unit, instanceID)
-    end
-    if not info then return false end
-    local ok, result = pcall(function() return blacklist[info.id] end)
-    return ok and result ~= nil
+-- Blacklist check: skip when spellId is secret (aura shows normally in that case).
+local function IsAuraBlacklisted(blacklist, unit, instanceID)
+    local data = C_UnitAuras.GetAuraDataByAuraInstanceID(unit, instanceID)
+    if not data then return false end
+    if issecretvalue and issecretvalue(data.spellId) then return false end
+    return blacklist[data.spellId] ~= nil
 end
 
 local function UpdateAuras(unitFrame)
@@ -986,7 +958,7 @@ local function UpdateAuras(unitFrame)
     local ccAuras = GetUnitAurasSafe(unit, "HARMFUL|CROWD_CONTROL")
     for _, aura in ipairs(ccAuras) do
         if ccIdx >= MAX_CC then break end
-        if not IsAuraBlacklisted(blacklist, unit, aura.auraInstanceID, "HARMFUL") then
+        if not IsAuraBlacklisted(blacklist, unit, aura.auraInstanceID) then
             ccIdx = ccIdx + 1
             ccIDs[aura.auraInstanceID] = true
             local slot = frames.cc[ccIdx]
@@ -1005,7 +977,7 @@ local function UpdateAuras(unitFrame)
     for _, aura in ipairs(buffs) do
         if buffIdx >= MAX_BUFFS then break end
         if IsBuffRelevant(unit, aura.auraInstanceID)
-            and not IsAuraBlacklisted(blacklist, unit, aura.auraInstanceID, "HELPFUL") then
+            and not IsAuraBlacklisted(blacklist, unit, aura.auraInstanceID) then
             buffIdx = buffIdx + 1
             local slot = frames.buffs[buffIdx]
             slot.icon:SetTexture(aura.icon)
@@ -1022,7 +994,7 @@ local function UpdateAuras(unitFrame)
     for _, aura in ipairs(debuffs) do
         if debuffIdx >= MAX_DEBUFFS then break end
         if not ccIDs[aura.auraInstanceID] then
-            if not IsAuraBlacklisted(blacklist, unit, aura.auraInstanceID, "HARMFUL") then
+            if not IsAuraBlacklisted(blacklist, unit, aura.auraInstanceID) then
                 debuffIdx = debuffIdx + 1
                 local slot = frames.debuffs[debuffIdx]
                 slot.icon:SetTexture(aura.icon)
