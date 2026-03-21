@@ -32,4 +32,5 @@ Skins\BetterBags.lua
 Skins\ObjectiveTracker.lua
 Skins\Professions.lua
 Skins\WorldMap.lua
+Skins\ChatBubbles.lua
 PadleyUI.lua

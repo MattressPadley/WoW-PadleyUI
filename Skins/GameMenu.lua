@@ -58,12 +58,15 @@ end
 -- Skin all children helper
 ---------------------------------------------------------------------------
 
+-- Backdrop frame reference (set during Apply, excluded from child hiding)
+local gmfBackdrop
+
 local function SkinAllChildren(gmf)
     for i = 1, select("#", gmf:GetChildren()) do
         local child = select(i, gmf:GetChildren())
         if child:GetObjectType() == "Button" then
             SkinMenuButton(child)
-        elseif child:GetObjectType() == "Frame" and child ~= gmf.Border then
+        elseif child:GetObjectType() == "Frame" and child ~= gmf.Border and child ~= gmfBackdrop then
             -- Hide decorative/separator frames
             child:SetAlpha(0)
         end
@@ -82,8 +85,8 @@ function GameMenuSkin:Apply()
         gmf.Border:SetAlpha(0)
     end
 
-    -- Apply flat backdrop
-    SE:ApplyBackdrop(gmf)
+    -- Apply flat backdrop (child frame — avoids Mixin taint)
+    gmfBackdrop = SE:ApplyBackdrop(gmf)
 
     -- Skin children now (in case they exist already)
     SkinAllChildren(gmf)

@@ -34,15 +34,15 @@ local LAZY_TOOLTIPS = {
 
 local function SkinTooltip(tooltip)
     if not tooltip or skinnedTooltips[tooltip] then return end
-    skinnedTooltips[tooltip] = true
 
     -- Hide the NineSlice border via alpha-zero (preserves layout)
     if tooltip.NineSlice then
         tooltip.NineSlice:SetAlpha(0)
     end
 
-    -- Apply flat backdrop directly (tooltips are NOT secure frames)
-    SE:ApplyBackdrop(tooltip)
+    -- Apply flat backdrop via child frame (avoids Mixin taint on Blizzard frames)
+    local bdFrame = SE:ApplyBackdrop(tooltip)
+    skinnedTooltips[tooltip] = bdFrame
 
     -- Re-apply on every show cycle (Blizzard can reset colors)
     tooltip:HookScript("OnShow", function(self)
@@ -50,7 +50,7 @@ local function SkinTooltip(tooltip)
             self.NineSlice:SetAlpha(0)
         end
         local bg = C.BACKDROP_COLOR
-        self:SetBackdropColor(bg[1], bg[2], bg[3], bg[4])
+        bdFrame:SetBackdropColor(bg[1], bg[2], bg[3], bg[4])
     end)
 end
 
@@ -66,6 +66,7 @@ local function SkinHealthBar(tooltip)
         color = { 0, 0.8, 0, 1 },
     })
 
+    -- Apply backdrop via child frame (avoids Mixin taint)
     SE:ApplyBackdrop(statusBar, {
         bgColor = { 0, 0, 0, 0.8 },
     })

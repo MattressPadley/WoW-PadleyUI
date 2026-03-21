@@ -28,18 +28,22 @@ end
 function SkinEngine:ApplyBackdrop(frame, opts)
     opts = opts or {}
 
-    if not frame.SetBackdrop then
-        Mixin(frame, BackdropTemplateMixin)
+    -- If frame already has SetBackdrop (addon-created BackdropTemplate frames),
+    -- apply directly. Otherwise create a child frame to avoid Mixin taint.
+    local target
+    if frame.SetBackdrop then
+        target = frame
+    else
+        target = CreateFrame("Frame", nil, frame, "BackdropTemplate")
+        target:SetAllPoints()
+        target:SetFrameLevel(frame:GetFrameLevel())
     end
 
-    local backdrop = {
-        bgFile = C.FLAT_BACKDROP.bgFile,
-    }
-
-    frame:SetBackdrop(backdrop)
-
+    target:SetBackdrop({ bgFile = C.FLAT_BACKDROP.bgFile })
     local bg = opts.bgColor or C.BACKDROP_COLOR
-    frame:SetBackdropColor(bg[1], bg[2], bg[3], bg[4])
+    target:SetBackdropColor(bg[1], bg[2], bg[3], bg[4])
+
+    return target
 end
 
 --- Skin a StatusBar with a flat texture.
