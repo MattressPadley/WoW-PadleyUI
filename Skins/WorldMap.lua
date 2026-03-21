@@ -13,6 +13,7 @@ local skinnedNavButtons = {}
 local skinnedMaxMinButtons = {}
 local skinnedScrollEntries = {}
 local skinnedSideTabs = {}
+local skinnedRewardItems = {}
 
 ---------------------------------------------------------------------------
 -- Helpers
@@ -30,6 +31,120 @@ local function CreateBackdropFrame(parent, offsets)
     bd:SetBackdrop({ bgFile = C.FLAT_BACKDROP.bgFile })
     bd:SetBackdropColor(C.BACKDROP_COLOR[1], C.BACKDROP_COLOR[2], C.BACKDROP_COLOR[3], C.BACKDROP_COLOR[4])
     return bd
+end
+
+---------------------------------------------------------------------------
+-- Reward item skinning
+---------------------------------------------------------------------------
+
+local function SkinRewardItem(frame)
+    if not frame or skinnedRewardItems[frame] then return end
+    skinnedRewardItems[frame] = true
+
+    -- Hide the ornate name background
+    if frame.NameFrame then frame.NameFrame:SetAlpha(0) end
+
+    -- Hide icon overlay and circle backgrounds
+    if frame.IconOverlay then frame.IconOverlay:SetAlpha(0) end
+    if frame.CircleBackground then frame.CircleBackground:SetAlpha(0) end
+    if frame.CircleBackgroundGlow then frame.CircleBackgroundGlow:SetAlpha(0) end
+
+    -- Clean up the icon
+    if frame.Icon then
+        frame.Icon:SetDrawLayer("ARTWORK")
+        frame.Icon:SetTexCoord(C.ICON_CROP[1], C.ICON_CROP[2], C.ICON_CROP[3], C.ICON_CROP[4])
+    end
+
+    -- Strip any Spellbook textures
+    for _, region in next, { frame:GetRegions() } do
+        if region:IsObjectType("Texture") and region:GetTexture() == [[Interface\Spellbook\Spellbook-Parts]] then
+            region:SetTexture(nil)
+        end
+    end
+
+    -- White item name
+    if frame.Name then frame.Name:SetTextColor(1, 1, 1) end
+
+    -- Count overlay
+    if frame.Count then frame.Count:SetDrawLayer("OVERLAY") end
+end
+
+--- Set all quest info text to white for readability on dark backdrop
+local function SkinQuestInfoText()
+    -- Headers
+    local headers = {
+        _G.QuestInfoTitleHeader,
+        _G.QuestInfoDescriptionHeader,
+        _G.QuestInfoObjectivesHeader,
+    }
+    for _, h in ipairs(headers) do
+        if h then h:SetTextColor(1, 1, 1) end
+    end
+    if _G.QuestInfoRewardsFrame and _G.QuestInfoRewardsFrame.Header then
+        _G.QuestInfoRewardsFrame.Header:SetTextColor(1, 1, 1)
+    end
+
+    -- Body text
+    local texts = {
+        _G.QuestInfoDescriptionText,
+        _G.QuestInfoObjectivesText,
+        _G.QuestInfoGroupSize,
+        _G.QuestInfoRewardText,
+        _G.QuestInfoQuestType,
+    }
+    for _, t in ipairs(texts) do
+        if t then t:SetTextColor(1, 1, 1) end
+    end
+
+    -- Rewards frame labels
+    local rf = _G.QuestInfoRewardsFrame
+    if rf then
+        if rf.ItemChooseText then rf.ItemChooseText:SetTextColor(1, 1, 1) end
+        if rf.ItemReceiveText then rf.ItemReceiveText:SetTextColor(1, 1, 1) end
+        if rf.SpellLearnText then rf.SpellLearnText:SetTextColor(1, 1, 1) end
+        if rf.PlayerTitleText then rf.PlayerTitleText:SetTextColor(1, 1, 1) end
+        if rf.XPFrame and rf.XPFrame.ReceiveText then
+            rf.XPFrame.ReceiveText:SetTextColor(1, 1, 1)
+        end
+    end
+end
+
+--- Hook called every time quest info is displayed — skins reward items and text
+local function OnQuestInfoDisplay()
+    SkinQuestInfoText()
+
+    local rewardsFrame = _G.QuestInfoFrame and _G.QuestInfoFrame.rewardsFrame
+    if not rewardsFrame then return end
+
+    -- Skin all reward buttons
+    if rewardsFrame.RewardButtons then
+        for _, button in ipairs(rewardsFrame.RewardButtons) do
+            SkinRewardItem(button)
+            -- Re-set name color every display (Blizzard resets it)
+            if button.Name then button.Name:SetTextColor(1, 1, 1) end
+        end
+    end
+
+    -- Skin dynamic spell reward pool
+    if rewardsFrame.spellRewardPool then
+        for spellIcon in rewardsFrame.spellRewardPool:EnumerateActive() do
+            SkinRewardItem(spellIcon)
+        end
+    end
+
+    -- Skin dynamic reputation reward pool
+    if rewardsFrame.reputationRewardPool then
+        for repIcon in rewardsFrame.reputationRewardPool:EnumerateActive() do
+            SkinRewardItem(repIcon)
+        end
+    end
+
+    -- Spell header text → white
+    if rewardsFrame.spellHeaderPool then
+        for spellHeader in rewardsFrame.spellHeaderPool:EnumerateActive() do
+            spellHeader:SetVertexColor(1, 1, 1)
+        end
+    end
 end
 
 ---------------------------------------------------------------------------
@@ -145,10 +260,51 @@ local function SkinQuestDetails()
     if details.Bg then details.Bg:SetAlpha(0) end
     if details.SealMaterialBG then details.SealMaterialBG:SetAlpha(0) end
 
-    -- Rewards container
+    -- Map background (parchment behind quest text)
+    if QuestMapFrame.Background then QuestMapFrame.Background:SetAlpha(0) end
+
+    -- Rewards container — strip ornate border/background
     if details.RewardsFrameContainer then
         SE:StripTextures(details.RewardsFrameContainer)
+        if details.RewardsFrameContainer.RewardsFrame then
+            SE:StripTextures(details.RewardsFrameContainer.RewardsFrame)
+        end
     end
+
+    -- One-time skinning of static reward sub-frames
+    local rewardSubFrames = { "HonorFrame", "XPFrame", "SpellFrame", "SkillPointFrame", "ArtifactXPFrame", "TitleFrame", "WarModeBonusFrame" }
+    for _, name in ipairs(rewardSubFrames) do
+        if _G.MapQuestInfoRewardsFrame and _G.MapQuestInfoRewardsFrame[name] then
+            SkinRewardItem(_G.MapQuestInfoRewardsFrame[name])
+        end
+        if _G.QuestInfoRewardsFrame and _G.QuestInfoRewardsFrame[name] then
+            SkinRewardItem(_G.QuestInfoRewardsFrame[name])
+        end
+    end
+    if _G.MapQuestInfoRewardsFrame and _G.MapQuestInfoRewardsFrame.MoneyFrame then
+        SkinRewardItem(_G.MapQuestInfoRewardsFrame.MoneyFrame)
+    end
+
+    -- Title reward frame — hide ornate textures
+    local titleFrame = _G.QuestInfoPlayerTitleFrame
+    if titleFrame then
+        if titleFrame.FrameLeft then titleFrame.FrameLeft:SetTexture(nil) end
+        if titleFrame.FrameCenter then titleFrame.FrameCenter:SetTexture(nil) end
+        if titleFrame.FrameRight then titleFrame.FrameRight:SetTexture(nil) end
+        if titleFrame.Icon then
+            titleFrame.Icon:SetTexCoord(C.ICON_CROP[1], C.ICON_CROP[2], C.ICON_CROP[3], C.ICON_CROP[4])
+        end
+    end
+
+    -- Item highlight — flat style
+    local highlight = _G.QuestInfoItemHighlight
+    if highlight then
+        SE:StripTextures(highlight)
+    end
+
+    -- Hook QuestInfo_Display to skin text and rewards every time a quest is viewed
+    hooksecurefunc("QuestInfo_Display", OnQuestInfoDisplay)
+    OnQuestInfoDisplay()
 end
 
 ---------------------------------------------------------------------------
