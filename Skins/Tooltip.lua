@@ -40,8 +40,16 @@ local function SkinTooltip(tooltip)
         tooltip.NineSlice:SetAlpha(0)
     end
 
-    -- Apply flat backdrop via child frame (avoids Mixin taint on Blizzard frames)
-    local bdFrame = SE:ApplyBackdrop(tooltip)
+    -- Use a plain frame + texture instead of BackdropTemplate to avoid taint.
+    -- BackdropTemplate's SetupTextureCoordinates calls GetWidth() in Lua, which
+    -- returns a secret value when the tooltip is shown via securecallfunction
+    -- (e.g. loot). A plain texture anchors at the C level without Lua width calls.
+    local bdFrame = CreateFrame("Frame", nil, tooltip)
+    bdFrame:SetAllPoints()
+    bdFrame:SetFrameLevel(tooltip:GetFrameLevel())
+    local bgTex = bdFrame:CreateTexture(nil, "BACKGROUND")
+    bgTex:SetAllPoints()
+    bgTex:SetColorTexture(C.BACKDROP_COLOR[1], C.BACKDROP_COLOR[2], C.BACKDROP_COLOR[3], C.BACKDROP_COLOR[4])
     skinnedTooltips[tooltip] = bdFrame
 
     -- Re-apply on every show cycle (Blizzard can reset colors)
@@ -50,7 +58,7 @@ local function SkinTooltip(tooltip)
             self.NineSlice:SetAlpha(0)
         end
         local bg = C.BACKDROP_COLOR
-        bdFrame:SetBackdropColor(bg[1], bg[2], bg[3], bg[4])
+        bgTex:SetColorTexture(bg[1], bg[2], bg[3], bg[4])
     end)
 end
 
@@ -66,10 +74,13 @@ local function SkinHealthBar(tooltip)
         color = { 0, 0.8, 0, 1 },
     })
 
-    -- Apply backdrop via child frame (avoids Mixin taint)
-    SE:ApplyBackdrop(statusBar, {
-        bgColor = { 0, 0, 0, 0.8 },
-    })
+    -- Plain texture backdrop (avoids BackdropTemplate taint in secure context)
+    local bgFrame = CreateFrame("Frame", nil, statusBar)
+    bgFrame:SetAllPoints()
+    bgFrame:SetFrameLevel(statusBar:GetFrameLevel())
+    local bgTex = bgFrame:CreateTexture(nil, "BACKGROUND")
+    bgTex:SetAllPoints()
+    bgTex:SetColorTexture(0, 0, 0, 0.8)
 end
 
 ---------------------------------------------------------------------------

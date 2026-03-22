@@ -23,6 +23,9 @@ function SkinEngine:StripTextures(frame, kill)
 end
 
 --- Apply a flat backdrop with pixel border to a frame.
+--- NOTE: If `frame` already has SetBackdrop (e.g. inherits BackdropTemplate),
+--- this calls SetBackdrop directly on it. Do NOT use on Blizzard frames shown
+--- in secure contexts (tooltips, etc.) — create a child BackdropTemplate instead.
 --- @param frame table The target frame
 --- @param opts table|nil Optional overrides { bgColor, borderColor, borderSize }
 function SkinEngine:ApplyBackdrop(frame, opts)
