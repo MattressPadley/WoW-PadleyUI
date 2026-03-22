@@ -6,41 +6,45 @@ local SE = ns.SkinEngine
 local GameMenuSkin = {}
 ns.GameMenuSkin = GameMenuSkin
 
--- External tracking table (stores bdFrame per button)
+-- External tracking tables
 local skinnedButtons = {}
+local hookedRegions = {}
 
 ---------------------------------------------------------------------------
 -- Button skinning
 ---------------------------------------------------------------------------
 
-local function ZeroButtonTextures(button)
-    for i = 1, button:GetNumRegions() do
-        local region = select(i, button:GetRegions())
-        if region and region:GetObjectType() == "Texture" then
-            region:SetAlpha(0)
-        end
-    end
-    if button:GetNormalTexture() then button:GetNormalTexture():SetAlpha(0) end
-    if button:GetHighlightTexture() then button:GetHighlightTexture():SetAlpha(0) end
-    if button:GetPushedTexture() then button:GetPushedTexture():SetAlpha(0) end
+-- Zero a texture's alpha and hook SetAlpha so Blizzard can never restore it.
+local function HookZeroAlpha(region)
+    if not region or hookedRegions[region] then return end
+    hookedRegions[region] = true
+    region:SetAlpha(0)
+    hooksecurefunc(region, "SetAlpha", function(self)
+        if self:GetAlpha() > 0 then self:SetAlpha(0) end
+    end)
 end
 
 local function SkinMenuButton(button)
-    if not button then return end
-
-    -- Always re-zero textures (Blizzard can reset them between shows)
-    ZeroButtonTextures(button)
-
-    -- Only create backdrop + hooks once
-    if skinnedButtons[button] then return end
+    if not button or skinnedButtons[button] then return end
     skinnedButtons[button] = true
 
-    -- Child backdrop at same frame level (renders behind button's own regions)
+    -- Permanently zero all button textures via hooks
+    for i = 1, button:GetNumRegions() do
+        local region = select(i, button:GetRegions())
+        if region and region:GetObjectType() == "Texture" then
+            HookZeroAlpha(region)
+        end
+    end
+    HookZeroAlpha(button:GetNormalTexture())
+    HookZeroAlpha(button:GetHighlightTexture())
+    HookZeroAlpha(button:GetPushedTexture())
+
+    -- Child backdrop at SAME level as button (not +1, which covers text)
     local bdFrame = CreateFrame("Frame", nil, button, "BackdropTemplate")
     bdFrame:SetAllPoints()
     bdFrame:SetFrameLevel(button:GetFrameLevel())
     bdFrame:SetBackdrop({
-        bgFile   = C.FLAT_BACKDROP.bgFile,
+        bgFile = C.FLAT_BACKDROP.bgFile,
     })
     bdFrame:SetBackdropColor(C.HEADER_COLOR[1], C.HEADER_COLOR[2], C.HEADER_COLOR[3], C.HEADER_COLOR[4])
     bdFrame:EnableMouse(false)
@@ -52,25 +56,19 @@ local function SkinMenuButton(button)
     button:HookScript("OnLeave", function()
         bdFrame:SetBackdropColor(C.HEADER_COLOR[1], C.HEADER_COLOR[2], C.HEADER_COLOR[3], C.HEADER_COLOR[4])
     end)
-end
 
----------------------------------------------------------------------------
--- Skin all children helper
----------------------------------------------------------------------------
-
--- Backdrop frame reference (set during Apply, excluded from child hiding)
-local gmfBackdrop
-
-local function SkinAllChildren(gmf)
-    for i = 1, select("#", gmf:GetChildren()) do
-        local child = select(i, gmf:GetChildren())
-        if child:GetObjectType() == "Button" then
-            SkinMenuButton(child)
-        elseif child:GetObjectType() == "Frame" and child ~= gmf.Border and child ~= gmfBackdrop then
-            -- Hide decorative/separator frames
-            child:SetAlpha(0)
+    -- Re-add hover hooks when Blizzard resets scripts during pool recycling
+    hooksecurefunc(button, "SetScript", function(self, script)
+        if script == "OnEnter" then
+            self:HookScript("OnEnter", function()
+                bdFrame:SetBackdropColor(C.HIGHLIGHT_COLOR[1], C.HIGHLIGHT_COLOR[2], C.HIGHLIGHT_COLOR[3], C.HIGHLIGHT_COLOR[4])
+            end)
+        elseif script == "OnLeave" then
+            self:HookScript("OnLeave", function()
+                bdFrame:SetBackdropColor(C.HEADER_COLOR[1], C.HEADER_COLOR[2], C.HEADER_COLOR[3], C.HEADER_COLOR[4])
+            end)
         end
-    end
+    end)
 end
 
 ---------------------------------------------------------------------------
@@ -85,14 +83,20 @@ function GameMenuSkin:Apply()
         gmf.Border:SetAlpha(0)
     end
 
+    -- Strip all textures from the main frame and header
+    SE:StripTextures(gmf)
+    if gmf.Header then
+        SE:StripTextures(gmf.Header)
+    end
+
     -- Apply flat backdrop (child frame — avoids Mixin taint)
-    gmfBackdrop = SE:ApplyBackdrop(gmf)
+    SE:ApplyBackdrop(gmf)
 
-    -- Skin children now (in case they exist already)
-    SkinAllChildren(gmf)
-
-    -- Buttons may not exist yet — hook OnShow to skin when menu first opens
-    gmf:HookScript("OnShow", function(self)
-        SkinAllChildren(self)
+    -- Hook InitButtons to skin pool buttons each time the menu opens
+    hooksecurefunc(gmf, "InitButtons", function(menu)
+        if not menu.buttonPool then return end
+        for button in menu.buttonPool:EnumerateActive() do
+            SkinMenuButton(button)
+        end
     end)
 end
