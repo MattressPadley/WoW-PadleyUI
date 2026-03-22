@@ -13,6 +13,9 @@ local hookedRegions = {}
 local frameUnits = {}
 local powerBarUnits = {}
 
+-- Tracked bars for dynamic resizing from config
+local trackedBars = {}
+
 -- Guard against recursive hook calls
 local settingTexture = {}
 local settingColor = {}
@@ -329,7 +332,7 @@ end
 -- Skin Power Bar
 ---------------------------------------------------------------------------
 
-local function SkinPowerBar(bar, unit, cfg)
+local function SkinPowerBar(bar, unit, cfg, anchorBar)
     if not bar then return end
 
     SE:SkinStatusBar(bar)
@@ -346,10 +349,18 @@ local function SkinPowerBar(bar, unit, cfg)
     -- Create background, remove Blizzard masks, size bar via anchoring (not SetSize — taints dimensions)
     CreateBarBackground(bar)
     RemoveBarMasks(bar)
-    local anchor = bar:GetParent() or bar
-    bar:ClearAllPoints()
-    bar:SetPoint("TOPLEFT", anchor, "TOPLEFT", cfg.startX or 0, cfg.startY or 0)
-    bar:SetPoint("BOTTOMRIGHT", anchor, "TOPLEFT", (cfg.startX or 0) + cfg.width, (cfg.startY or 0) - cfg.height)
+    if anchorBar then
+        -- Anchor below health bar for consistent positioning across all frames
+        bar:ClearAllPoints()
+        bar:SetPoint("TOPLEFT", anchorBar, "BOTTOMLEFT", 0, cfg.startY or 0)
+        bar:SetPoint("TOPRIGHT", anchorBar, "BOTTOMRIGHT", 0, cfg.startY or 0)
+        bar:SetHeight(cfg.height)
+    else
+        local anchor = bar:GetParent() or bar
+        bar:ClearAllPoints()
+        bar:SetPoint("TOPLEFT", anchor, "TOPLEFT", cfg.startX or 0, cfg.startY or 0)
+        bar:SetPoint("BOTTOMRIGHT", anchor, "TOPLEFT", (cfg.startX or 0) + cfg.width, (cfg.startY or 0) - cfg.height)
+    end
 
     powerBarUnits[bar] = unit
     ApplyPowerColor(bar)
@@ -367,11 +378,19 @@ local function SkinPowerBar(bar, unit, cfg)
 
         -- Re-anchor when Blizzard resets points (safe alternative to SetWidth in a hook)
         local enforceCfg = cfg
+        local enforceAnchorBar = anchorBar
         hooksecurefunc(bar, "SetWidth", function(self)
-            local a = self:GetParent() or self
-            self:ClearAllPoints()
-            self:SetPoint("TOPLEFT", a, "TOPLEFT", enforceCfg.startX or 0, enforceCfg.startY or 0)
-            self:SetPoint("BOTTOMRIGHT", a, "TOPLEFT", (enforceCfg.startX or 0) + enforceCfg.width, (enforceCfg.startY or 0) - enforceCfg.height)
+            if enforceAnchorBar then
+                self:ClearAllPoints()
+                self:SetPoint("TOPLEFT", enforceAnchorBar, "BOTTOMLEFT", 0, enforceCfg.startY or 0)
+                self:SetPoint("TOPRIGHT", enforceAnchorBar, "BOTTOMRIGHT", 0, enforceCfg.startY or 0)
+                self:SetHeight(enforceCfg.height)
+            else
+                local a = self:GetParent() or self
+                self:ClearAllPoints()
+                self:SetPoint("TOPLEFT", a, "TOPLEFT", enforceCfg.startX or 0, enforceCfg.startY or 0)
+                self:SetPoint("BOTTOMRIGHT", a, "TOPLEFT", (enforceCfg.startX or 0) + enforceCfg.width, (enforceCfg.startY or 0) - enforceCfg.height)
+            end
         end)
     end
 
@@ -477,7 +496,11 @@ local function SkinPlayerFrame()
 
     -- Skin bars BEFORE reparenting container
     SkinHealthBar(healthBar, "player", BorderPositions.player.health)
-    SkinPowerBar(manaBar, "player", BorderPositions.player.mana)
+    SkinPowerBar(manaBar, "player", BorderPositions.player.mana, healthBar)
+
+    -- Track bars for dynamic resizing
+    trackedBars[#trackedBars + 1] = { bar = healthBar, unit = "player", type = "health" }
+    trackedBars[#trackedBars + 1] = { bar = manaBar, healthBar = healthBar, unit = "player", type = "mana" }
 
     -- Strip masks from parent containers that clip the bars
     if contentMain and contentMain.HealthBarsContainer then
@@ -553,13 +576,11 @@ local function SkinTargetFrame()
 
     -- Skin bars
     SkinHealthBar(healthBar, "target", BorderPositions.target.health)
-    SkinPowerBar(manaBar, "target", BorderPositions.target.mana)
+    SkinPowerBar(manaBar, "target", BorderPositions.target.mana, healthBar)
 
-    -- Align mana bar directly under health bar
-    if manaBar and healthBar then
-        manaBar:ClearAllPoints()
-        manaBar:SetPoint("TOPLEFT", healthBar, "BOTTOMLEFT", 0, BorderPositions.target.mana.startY)
-    end
+    -- Track bars for dynamic resizing
+    trackedBars[#trackedBars + 1] = { bar = healthBar, unit = "target", type = "health" }
+    trackedBars[#trackedBars + 1] = { bar = manaBar, healthBar = healthBar, unit = "target", type = "mana" }
 
     -- Strip masks from parent containers that clip the bars
     if contentMain and contentMain.HealthBarsContainer then
@@ -738,13 +759,11 @@ local function SkinFocusFrame()
 
     -- Skin bars
     SkinHealthBar(healthBar, "focus", BorderPositions.focus.health)
-    SkinPowerBar(manaBar, "focus", BorderPositions.focus.mana)
+    SkinPowerBar(manaBar, "focus", BorderPositions.focus.mana, healthBar)
 
-    -- Align mana bar directly under health bar
-    if manaBar and healthBar then
-        manaBar:ClearAllPoints()
-        manaBar:SetPoint("TOPLEFT", healthBar, "BOTTOMLEFT", 0, BorderPositions.focus.mana.startY)
-    end
+    -- Track bars for dynamic resizing
+    trackedBars[#trackedBars + 1] = { bar = healthBar, unit = "focus", type = "health" }
+    trackedBars[#trackedBars + 1] = { bar = manaBar, healthBar = healthBar, unit = "focus", type = "mana" }
 
     -- Strip masks from parent containers that clip the bars
     if contentMain and contentMain.HealthBarsContainer then
@@ -1013,10 +1032,54 @@ local function SkinFrameAuras(frame)
 end
 
 ---------------------------------------------------------------------------
+-- Dynamic resize support
+---------------------------------------------------------------------------
+
+local function UpdateBorderPositions()
+    local db = ns.Config.db
+    if not db or not db.unitframes then return end
+    local w = db.unitframes.width
+    local hh = db.unitframes.healthHeight
+    local ph = db.unitframes.powerHeight
+
+    for _, unitKey in ipairs({ "player", "target", "focus" }) do
+        BorderPositions[unitKey].health.width = w
+        BorderPositions[unitKey].health.height = hh
+        BorderPositions[unitKey].mana.width = w
+        BorderPositions[unitKey].mana.height = ph
+    end
+end
+
+function UnitFrameSkin:ResizeAllBars()
+    UpdateBorderPositions()
+    for _, entry in ipairs(trackedBars) do
+        local bar = entry.bar
+        if bar then
+            local cfg = BorderPositions[entry.unit][entry.type == "health" and "health" or "mana"]
+            if entry.type == "health" then
+                local anchor = bar:GetParent() or bar
+                bar:ClearAllPoints()
+                bar:SetPoint("TOPLEFT", anchor, "TOPLEFT", cfg.startX or 0, cfg.startY or 0)
+                bar:SetPoint("BOTTOMRIGHT", anchor, "TOPLEFT", (cfg.startX or 0) + cfg.width, (cfg.startY or 0) - cfg.height)
+            elseif entry.healthBar then
+                bar:ClearAllPoints()
+                bar:SetPoint("TOPLEFT", entry.healthBar, "BOTTOMLEFT", 0, cfg.startY or 0)
+                bar:SetPoint("TOPRIGHT", entry.healthBar, "BOTTOMRIGHT", 0, cfg.startY or 0)
+                bar:SetHeight(cfg.height)
+            end
+            -- Re-anchor background
+            local bg = barBgFrames[bar]
+            if bg then bg:SetAllPoints(bar) end
+        end
+    end
+end
+
+---------------------------------------------------------------------------
 -- Apply
 ---------------------------------------------------------------------------
 
 function UnitFrameSkin:Apply()
+    UpdateBorderPositions()
     SkinPlayerFrame()
     SkinTargetFrame()
     SkinFocusFrame()
@@ -1046,6 +1109,7 @@ function UnitFrameSkin:Apply()
     eventFrame:RegisterEvent("UNIT_DISPLAYPOWER")
     eventFrame:SetScript("OnEvent", function(self, event, arg1)
         if event == "PLAYER_ENTERING_WORLD" then
+            UnitFrameSkin:ResizeAllBars()
             RefreshNameColor(PlayerFrame and PlayerFrame.name, "player")
         elseif event == "PLAYER_TARGET_CHANGED" then
             RefreshTargetColors()

@@ -12,6 +12,11 @@ local defaults = {
         width = 110,
         height = 11,
     },
+    unitframes = {
+        width = 123,
+        healthHeight = 19,
+        powerHeight = 8,
+    },
     auraBlacklist = {},  -- { [spellId] = { name = "...", icon = textureId } }
 }
 
@@ -365,6 +370,41 @@ function Config:CreateConfigPanel()
     end)
 
     --------------------------------------------------------------------------
+    -- Unit Frames section
+    --------------------------------------------------------------------------
+    CreateSectionHeader(generalContent, "Unit Frames", 12, -140)
+
+    local ufWidthSlider = CreateSlider(generalContent, "Width", 60, 200, 1, 12, -164, 280)
+    ufWidthSlider:SetValue(self.db.unitframes.width)
+    ufWidthSlider.valText:SetText(tostring(self.db.unitframes.width))
+    ufWidthSlider:SetScript("OnValueChanged", function(_, val)
+        val = math.floor(val + 0.5)
+        ufWidthSlider.valText:SetText(tostring(val))
+        self:Set("unitframes", "width", val)
+        self:ApplyUnitFrameDimensions()
+    end)
+
+    local ufHealthSlider = CreateSlider(generalContent, "Health Height", 4, 40, 1, 12, -214, 280)
+    ufHealthSlider:SetValue(self.db.unitframes.healthHeight)
+    ufHealthSlider.valText:SetText(tostring(self.db.unitframes.healthHeight))
+    ufHealthSlider:SetScript("OnValueChanged", function(_, val)
+        val = math.floor(val + 0.5)
+        ufHealthSlider.valText:SetText(tostring(val))
+        self:Set("unitframes", "healthHeight", val)
+        self:ApplyUnitFrameDimensions()
+    end)
+
+    local ufPowerSlider = CreateSlider(generalContent, "Power Height", 2, 20, 1, 12, -264, 280)
+    ufPowerSlider:SetValue(self.db.unitframes.powerHeight)
+    ufPowerSlider.valText:SetText(tostring(self.db.unitframes.powerHeight))
+    ufPowerSlider:SetScript("OnValueChanged", function(_, val)
+        val = math.floor(val + 0.5)
+        ufPowerSlider.valText:SetText(tostring(val))
+        self:Set("unitframes", "powerHeight", val)
+        self:ApplyUnitFrameDimensions()
+    end)
+
+    --------------------------------------------------------------------------
     -- Tab 2: Blacklist
     --------------------------------------------------------------------------
     local blacklistContent = CreateTab("Blacklist", 2)
@@ -600,8 +640,8 @@ function Config:CreateConfigPanel()
     -- Select first tab by default
     SelectTab(1)
 
-    -- Make panel taller to accommodate tabs
-    panel:SetSize(320, 300)
+    -- Make panel taller to accommodate tabs + unit frame sliders
+    panel:SetSize(320, 380)
 
     self.panel = panel
 end
@@ -613,5 +653,11 @@ end
 function Config:ApplyNameplateDimensions()
     if ns.NameplateSkin then
         ns.NameplateSkin:ResizeAll()
+    end
+end
+
+function Config:ApplyUnitFrameDimensions()
+    if ns.UnitFrameSkin then
+        ns.UnitFrameSkin:ResizeAllBars()
     end
 end
