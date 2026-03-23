@@ -139,6 +139,12 @@ local function StyleFontString(fs)
     fs:SetShadowColor(unpack(C.SHADOW_COLOR))
 end
 
+local function HideCustomCastBar(unitFrame)
+    local custom = customCastBars[unitFrame]
+    if not custom then return end
+    custom.container:Hide()
+end
+
 local function ShowCustomCastBar(unitFrame, spellID, isChannelKnown)
     local custom = customCastBars[unitFrame]
     if not custom or not unitFrame.unit then return end
@@ -154,55 +160,64 @@ local function ShowCustomCastBar(unitFrame, spellID, isChannelKnown)
         end
     end
 
-    -- Get timing from API — values are secret for nameplate units,
-    -- but widget APIs (SetMinMaxValues, SetValue, SetTexture, SetText) accept them
-    local startTimeMs, endTimeMs, notInterruptible
+    -- Determine cast type, get duration object and metadata
+    local notInterruptible
     local isChannel
+    local castDuration
 
     if isChannelKnown == true then
-        local n, _, t, s, e, _, ni = UnitChannelInfo(unit)
-        startTimeMs, endTimeMs, notInterruptible = s, e, ni
         isChannel = true
+        castDuration = UnitChannelDuration(unit)
+        local n, _, t, _, _, _, ni = UnitChannelInfo(unit)
+        notInterruptible = ni
         if not spellName then spellName = n end
         if not spellIcon then spellIcon = t end
     elseif isChannelKnown == false then
-        local n, _, t, s, e, _, _, ni = UnitCastingInfo(unit)
-        startTimeMs, endTimeMs, notInterruptible = s, e, ni
         isChannel = false
+        castDuration = UnitCastingDuration(unit)
+        local n, _, t, _, _, _, _, ni = UnitCastingInfo(unit)
+        notInterruptible = ni
         if not spellName then spellName = n end
         if not spellIcon then spellIcon = t end
     else
         -- RefreshNamePlate path: detect cast type
-        local cn, _, ct, cs, ce, _, _, cni = UnitCastingInfo(unit)
-        if cs then
-            startTimeMs, endTimeMs, notInterruptible = cs, ce, cni
+        castDuration = UnitCastingDuration(unit)
+        if castDuration then
             isChannel = false
-            spellName, spellIcon = cn, ct
+            local cn, _, ct, _, _, _, _, cni = UnitCastingInfo(unit)
+            notInterruptible = cni
+            if not spellName then spellName = cn end
+            if not spellIcon then spellIcon = ct end
         else
-            local hn, _, ht, hs, he, _, hni = UnitChannelInfo(unit)
-            if hs then
-                startTimeMs, endTimeMs, notInterruptible = hs, he, hni
+            castDuration = UnitChannelDuration(unit)
+            if castDuration then
                 isChannel = true
-                spellName, spellIcon = hn, ht
+                local hn, _, ht, _, _, _, hni = UnitChannelInfo(unit)
+                notInterruptible = hni
+                if not spellName then spellName = hn end
+                if not spellIcon then spellIcon = ht end
             else
+                HideCustomCastBar(unitFrame)
                 return
             end
         end
     end
 
-    -- Widget APIs accept secret values — no Lua arithmetic needed
+    if not castDuration then
+        HideCustomCastBar(unitFrame)
+        return
+    end
+
+    -- Widget APIs accept secret values
     if custom.icon then custom.icon:SetTexture(spellIcon) end
     if custom.text and spellName then custom.text:SetText(spellName) end
 
-    -- Pass secret ms values directly to widget; SetValue with non-secret GetTime()*1000
-    custom.bar:SetMinMaxValues(startTimeMs, endTimeMs)
-    custom.bar:SetReverseFill(isChannel)
-    custom.bar:SetValue(GetTime() * 1000)
-
-    -- OnUpdate: GetTime()*1000 is non-secret; SetValue clamps to min/max internally
-    custom.bar:SetScript("OnUpdate", function(self)
-        self:SetValue(GetTime() * 1000)
-    end)
+    -- SetTimerDuration handles bar animation natively — no OnUpdate needed
+    custom.bar:SetTimerDuration(
+        castDuration, nil,
+        isChannel and Enum.StatusBarTimerDirection.RemainingTime
+                  or Enum.StatusBarTimerDirection.ElapsedTime
+    )
 
     -- Secret-safe color via EvaluateColorValueFromBoolean (handles secret booleans)
     local r = C_CurveUtil.EvaluateColorValueFromBoolean(notInterruptible, 0.7, 1)
@@ -210,13 +225,6 @@ local function ShowCustomCastBar(unitFrame, spellID, isChannelKnown)
     custom.bar:GetStatusBarTexture():SetVertexColor(r, 0.7, b)
 
     custom.container:Show()
-end
-
-local function HideCustomCastBar(unitFrame)
-    local custom = customCastBars[unitFrame]
-    if not custom then return end
-    custom.bar:SetScript("OnUpdate", nil)
-    custom.container:Hide()
 end
 
 local function SkinHealthBar(unitFrame)
