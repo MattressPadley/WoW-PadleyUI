@@ -21,17 +21,9 @@ local function SkinEntry(entry)
     -- Always re-apply flat texture (SetStyle resets it during Init)
     statusBar:SetStatusBarTexture(C.BAR_TEXTURE)
 
-    -- Style entry text: custom font, no outline, shadow instead
-    if statusBar.Name then
-        SE:StyleFont(statusBar.Name, nil, "")
-        statusBar.Name:SetShadowOffset(C.SHADOW_OFFSET[1], C.SHADOW_OFFSET[2])
-        statusBar.Name:SetShadowColor(unpack(C.SHADOW_COLOR))
-    end
-    if statusBar.Value then
-        SE:StyleFont(statusBar.Value, nil, "")
-        statusBar.Value:SetShadowOffset(C.SHADOW_OFFSET[1], C.SHADOW_OFFSET[2])
-        statusBar.Value:SetShadowColor(unpack(C.SHADOW_COLOR))
-    end
+    -- NOTE: Do NOT call StyleFont on statusBar.Name or statusBar.Value.
+    -- These FontStrings are read during secure Init/Refresh execution;
+    -- tainting them causes GetText() to return secret values.
 
     -- Hide the shadow background and edge regions
     local bgRegions = statusBar.BackgroundRegions
@@ -146,21 +138,13 @@ local function SkinSessionWindow(window)
     local sessionDD = window.SessionDropdown
     if sessionDD then
         SE:SkinDropdownButton(sessionDD)
-        if sessionDD.SessionName then
-            SE:StyleFont(sessionDD.SessionName, nil, "")
-            sessionDD.SessionName:SetShadowOffset(C.SHADOW_OFFSET[1], C.SHADOW_OFFSET[2])
-            sessionDD.SessionName:SetShadowColor(unpack(C.SHADOW_COLOR))
-        end
+        -- NOTE: Do NOT call StyleFont on sessionDD.SessionName — read during secure Refresh.
     end
 
     local typeDD = window.DamageMeterTypeDropdown
     if typeDD then
         SE:SkinDropdownButton(typeDD)
-        if typeDD.TypeName then
-            SE:StyleFont(typeDD.TypeName, nil, "")
-            typeDD.TypeName:SetShadowOffset(C.SHADOW_OFFSET[1], C.SHADOW_OFFSET[2])
-            typeDD.TypeName:SetShadowColor(unpack(C.SHADOW_COLOR))
-        end
+        -- NOTE: Do NOT call StyleFont on typeDD.TypeName — read during secure Refresh.
         if not buttonDecorations[typeDD] then
             local arrow = typeDD:CreateTexture(nil, "ARTWORK")
             arrow:SetTexture("Interface\\Buttons\\Arrow-Down-Down")

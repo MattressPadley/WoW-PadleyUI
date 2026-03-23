@@ -379,18 +379,24 @@ local function SkinPowerBar(bar, unit, cfg, anchorBar)
         -- Re-anchor when Blizzard resets points (safe alternative to SetWidth in a hook)
         local enforceCfg = cfg
         local enforceAnchorBar = anchorBar
+        local pendingLayout
         hooksecurefunc(bar, "SetWidth", function(self)
-            if enforceAnchorBar then
-                self:ClearAllPoints()
-                self:SetPoint("TOPLEFT", enforceAnchorBar, "BOTTOMLEFT", 0, enforceCfg.startY or 0)
-                self:SetPoint("TOPRIGHT", enforceAnchorBar, "BOTTOMRIGHT", 0, enforceCfg.startY or 0)
-                self:SetHeight(enforceCfg.height)
-            else
-                local a = self:GetParent() or self
-                self:ClearAllPoints()
-                self:SetPoint("TOPLEFT", a, "TOPLEFT", enforceCfg.startX or 0, enforceCfg.startY or 0)
-                self:SetPoint("BOTTOMRIGHT", a, "TOPLEFT", (enforceCfg.startX or 0) + enforceCfg.width, (enforceCfg.startY or 0) - enforceCfg.height)
-            end
+            if pendingLayout then return end
+            pendingLayout = true
+            C_Timer.After(0, function()
+                pendingLayout = nil
+                if enforceAnchorBar then
+                    self:ClearAllPoints()
+                    self:SetPoint("TOPLEFT", enforceAnchorBar, "BOTTOMLEFT", 0, enforceCfg.startY or 0)
+                    self:SetPoint("TOPRIGHT", enforceAnchorBar, "BOTTOMRIGHT", 0, enforceCfg.startY or 0)
+                    self:SetHeight(enforceCfg.height)
+                else
+                    local a = self:GetParent() or self
+                    self:ClearAllPoints()
+                    self:SetPoint("TOPLEFT", a, "TOPLEFT", enforceCfg.startX or 0, enforceCfg.startY or 0)
+                    self:SetPoint("BOTTOMRIGHT", a, "TOPLEFT", (enforceCfg.startX or 0) + enforceCfg.width, (enforceCfg.startY or 0) - enforceCfg.height)
+                end
+            end)
         end)
     end
 

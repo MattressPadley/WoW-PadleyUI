@@ -4,6 +4,9 @@ local C = ns.C
 local SkinEngine = {}
 ns.SkinEngine = SkinEngine
 
+local hookedTextures = {}
+local hookedAtlases = {}
+
 --- Strip all textures from a frame's regions.
 --- @param frame table The frame to strip
 --- @param kill boolean If true, permanently hide textures (prevent re-show)
@@ -65,8 +68,8 @@ end
 --- Uses hooksecurefunc to avoid taint.
 --- @param region table The texture region to keep cleared
 function SkinEngine:HookTextureRemoval(region)
-    if region._padleyHooked then return end
-    region._padleyHooked = true
+    if hookedTextures[region] then return end
+    hookedTextures[region] = true
 
     hooksecurefunc(region, "SetTexture", function(self)
         if self:GetTexture() then
@@ -78,8 +81,8 @@ end
 --- Hook a texture region's SetAtlas to keep it cleared.
 --- @param region table The texture region to keep cleared
 function SkinEngine:HookAtlasRemoval(region)
-    if region._padleyAtlasHooked then return end
-    region._padleyAtlasHooked = true
+    if hookedAtlases[region] then return end
+    hookedAtlases[region] = true
 
     hooksecurefunc(region, "SetAtlas", function(self)
         self:SetAtlas("")
