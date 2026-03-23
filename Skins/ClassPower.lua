@@ -245,6 +245,7 @@ local function AttachToBlizzardFrame()
         if classFrame then
             classBarHidden = true
             classFrame:SetAlpha(0)
+            classFrame:EnableMouse(false)
             hooksecurefunc(classFrame, "SetAlpha", function(self, alpha)
                 if alpha > 0 then
                     self:SetAlpha(0)

@@ -33,4 +33,6 @@ Skins\ObjectiveTracker.lua
 Skins\Professions.lua
 Skins\WorldMap.lua
 Skins\ChatBubbles.lua
+Skins\TimerTracker.lua
+Skins\EncounterBar.lua
 PadleyUI.lua
