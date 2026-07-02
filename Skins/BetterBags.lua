@@ -6,7 +6,41 @@ ns.BetterBagsSkin = BetterBagsSkin
 
 local decoratorFrames = {}  -- frame name -> decoration
 local itemButtons = {}      -- button name -> { decoration, bdFrame }
-local decorationBorders = {}  -- decoration frame -> bdFrame
+local decorationBorders = {}  -- decoration frame AND item button -> bdFrame
+local mirroredBorders = {}  -- IconBorder -> true (avoid double-hooking)
+
+---------------------------------------------------------------------------
+-- Helper: rarity border colouring
+---------------------------------------------------------------------------
+
+local function ResetBorderColor(bdFrame)
+    bdFrame:SetBackdropBorderColor(C.BORDER_COLOR[1], C.BORDER_COLOR[2], C.BORDER_COLOR[3], C.BORDER_COLOR[4])
+end
+
+-- Keep an ItemButton's rounded IconBorder invisible and mirror its rarity
+-- colour onto our flat bdFrame. Safe to call for both the decoration's and the
+-- underlying button's IconBorder (deduped by object) — BetterBags drives the
+-- quality colour on the real item button, not our blank decoration.
+local function MirrorIconBorder(iconBorder, bdFrame)
+    if not iconBorder then return end
+    iconBorder:SetAlpha(0)
+    if mirroredBorders[iconBorder] then return end
+    mirroredBorders[iconBorder] = true
+
+    hooksecurefunc(iconBorder, "Show", function(self)
+        self:SetAlpha(0)
+    end)
+    hooksecurefunc(iconBorder, "SetVertexColor", function(_, r, g, b)
+        if r and g and b and not (r == 1 and g == 1 and b == 1) then
+            bdFrame:SetBackdropBorderColor(r, g, b, 1)
+        else
+            ResetBorderColor(bdFrame)
+        end
+    end)
+    hooksecurefunc(iconBorder, "Hide", function()
+        ResetBorderColor(bdFrame)
+    end)
+end
 
 ---------------------------------------------------------------------------
 -- Helper: shared decoration with flat backdrop
@@ -237,25 +271,18 @@ function BetterBagsSkin:Apply()
             bdFrame:SetBackdropBorderColor(C.BORDER_COLOR[1], C.BORDER_COLOR[2], C.BORDER_COLOR[3], C.BORDER_COLOR[4])
             bdFrame:EnableMouse(false)
 
-            -- Keep IconBorder invisible but mirror its color to our flat border
-            if decoration.IconBorder then
-                decoration.IconBorder:SetAlpha(0)
-                hooksecurefunc(decoration.IconBorder, "Show", function(self)
-                    self:SetAlpha(0)
-                end)
-                hooksecurefunc(decoration.IconBorder, "SetVertexColor", function(_, r, g, b)
-                    if r and g and b and not (r == 1 and g == 1 and b == 1) then
-                        bdFrame:SetBackdropBorderColor(r, g, b, 1)
-                    else
-                        bdFrame:SetBackdropBorderColor(C.BORDER_COLOR[1], C.BORDER_COLOR[2], C.BORDER_COLOR[3], C.BORDER_COLOR[4])
-                    end
-                end)
-                hooksecurefunc(decoration.IconBorder, "Hide", function()
-                    bdFrame:SetBackdropBorderColor(C.BORDER_COLOR[1], C.BORDER_COLOR[2], C.BORDER_COLOR[3], C.BORDER_COLOR[4])
-                end)
-            end
+            -- Mirror the rarity colour onto our flat border. BetterBags renders
+            -- item icon/quality on the underlying item button, not on our blank
+            -- decoration, so the real colour arrives on the BUTTON's IconBorder
+            -- (and via SetItemButtonQuality(button, ...)). Mirror both IconBorders
+            -- and key the lookup by both objects so quality resolves regardless of
+            -- which one BetterBags drives.
+            local button = item.button
+            MirrorIconBorder(decoration.IconBorder, bdFrame)
+            MirrorIconBorder(button and button.IconBorder, bdFrame)
 
             decorationBorders[decoration] = bdFrame
+            if button then decorationBorders[button] = bdFrame end
 
             itemButtons[buttonName] = { decoration = decoration, bdFrame = bdFrame }
             return decoration
@@ -271,7 +298,7 @@ function BetterBagsSkin:Apply()
             local c = ITEM_QUALITY_COLORS[quality]
             bdFrame:SetBackdropBorderColor(c.r, c.g, c.b, 1)
         else
-            bdFrame:SetBackdropBorderColor(C.BORDER_COLOR[1], C.BORDER_COLOR[2], C.BORDER_COLOR[3], C.BORDER_COLOR[4])
+            ResetBorderColor(bdFrame)
         end
     end)
 end
