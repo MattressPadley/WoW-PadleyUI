@@ -16,9 +16,6 @@ local skinnedAuras = {}
 local settingTexture = {}
 local settingColor = {}
 
--- Borderless backdrop definition (flat, no edge)
-local FLAT_BG = { bgFile = C.FLAT_BACKDROP.bgFile }
-
 ---------------------------------------------------------------------------
 -- Utility
 ---------------------------------------------------------------------------
@@ -51,11 +48,15 @@ local function GetPowerColor(unit)
 end
 
 local function CreateBarBackdrop(bar)
-    local bd = CreateFrame("Frame", nil, bar, "BackdropTemplate")
+    -- Plain frame + SetColorTexture instead of BackdropTemplate to avoid
+    -- secret-value taint (BackdropTemplate's SetupTextureCoordinates calls
+    -- GetWidth() which returns a secret number on secure-parented frames).
+    local bd = CreateFrame("Frame", nil, bar)
     bd:SetAllPoints()
     bd:SetFrameLevel(math.max(bar:GetFrameLevel() - 1, 0))
-    bd:SetBackdrop(FLAT_BG)
-    bd:SetBackdropColor(C.BACKDROP_COLOR[1], C.BACKDROP_COLOR[2], C.BACKDROP_COLOR[3], C.BACKDROP_COLOR[4])
+    local tex = bd:CreateTexture(nil, "BACKGROUND")
+    tex:SetAllPoints()
+    tex:SetColorTexture(C.BACKDROP_COLOR[1], C.BACKDROP_COLOR[2], C.BACKDROP_COLOR[3], C.BACKDROP_COLOR[4])
     return bd
 end
 
@@ -214,8 +215,6 @@ local function StripChrome(frame)
     if frame.background then frame.background:SetAlpha(0) end
     if frame.aggroHighlight then frame.aggroHighlight:SetAlpha(0) end
     if frame.selectionHighlight then frame.selectionHighlight:SetAlpha(0) end
-    if frame.roleIcon then frame.roleIcon:SetAlpha(0) end
-
     -- Heal prediction / absorb overlays
     if frame.myHealPrediction then frame.myHealPrediction:SetAlpha(0) end
     if frame.otherHealPrediction then frame.otherHealPrediction:SetAlpha(0) end
@@ -227,13 +226,24 @@ local function StripChrome(frame)
     if frame.overAbsorbGlow then frame.overAbsorbGlow:SetAlpha(0) end
     if frame.overHealAbsorbGlow then frame.overHealAbsorbGlow:SetAlpha(0) end
 
-    -- Strip all decorative texture regions from the frame itself
+    -- Strip all decorative texture regions, but preserve icons Blizzard manages
+    local preserve = {}
+    if frame.roleIcon then preserve[frame.roleIcon] = true end
+    if frame.readyCheckIcon then preserve[frame.readyCheckIcon] = true end
+    if frame.centerStatusIcon then preserve[frame.centerStatusIcon] = true end
+
     for i = 1, frame:GetNumRegions() do
         local region = select(i, frame:GetRegions())
-        if region and region:GetObjectType() == "Texture" then
-            -- Keep the background region reference but alpha-zero it
+        if region and region:GetObjectType() == "Texture" and not preserve[region] then
             region:SetAlpha(0)
         end
+    end
+
+    -- Ensure the PartyMemberOverlay (leader crown, role, PvP icons) stays visible
+    local overlay = frame.PartyMemberOverlay
+    if overlay then
+        overlay:SetAlpha(1)
+        if overlay.LeaderIcon then overlay.LeaderIcon:SetAlpha(1) end
     end
 end
 
@@ -271,11 +281,13 @@ local function SkinAuraIcon(button)
     if button.Border then button.Border:SetAlpha(0) end
     if button.border then button.border:SetAlpha(0) end
 
-    -- Flat backdrop behind icon
-    local bd = CreateFrame("Frame", nil, button, "BackdropTemplate")
+    -- Plain frame + texture instead of BackdropTemplate to avoid secret-value taint
+    local bd = CreateFrame("Frame", nil, button)
     bd:SetAllPoints(button)
     bd:SetFrameLevel(math.max(button:GetFrameLevel() - 1, 0))
-    SE:ApplyBackdrop(bd)
+    local bgTex = bd:CreateTexture(nil, "BACKGROUND")
+    bgTex:SetAllPoints()
+    bgTex:SetColorTexture(C.BACKDROP_COLOR[1], C.BACKDROP_COLOR[2], C.BACKDROP_COLOR[3], C.BACKDROP_COLOR[4])
 end
 
 local function SkinAuraFrames(frame)
