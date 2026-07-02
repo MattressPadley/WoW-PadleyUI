@@ -14,8 +14,33 @@ local buttonDecorations = {}
 -- Entry Bars
 ---------------------------------------------------------------------------
 
+-- Locate the row's StatusBar. Prefer the documented `.StatusBar` field, but
+-- fall back to structural discovery so a 12.0.x field rename doesn't silently
+-- leave bars unskinned. Mirrors CooldownTracker.lua's FindStatusBar idiom.
+local function FindEntryStatusBar(entry)
+    -- Documented field (fast path — identical behaviour when it still exists).
+    local sb = entry.StatusBar
+    if sb and sb.GetObjectType and sb:GetObjectType() == "StatusBar" then
+        return sb
+    end
+    -- The row itself might be the StatusBar in a reworked layout.
+    if entry.GetObjectType and entry:GetObjectType() == "StatusBar" then
+        return entry
+    end
+    -- Otherwise scan direct children for the fill bar.
+    if entry.GetChildren then
+        for i = 1, select("#", entry:GetChildren()) do
+            local child = select(i, entry:GetChildren())
+            if child and child.GetObjectType and child:GetObjectType() == "StatusBar" then
+                return child
+            end
+        end
+    end
+end
+
 local function SkinEntry(entry)
-    local statusBar = entry.StatusBar
+    if not entry then return end
+    local statusBar = FindEntryStatusBar(entry)
     if not statusBar then return end
 
     -- Always re-apply flat texture (SetStyle resets it during Init)
