@@ -161,13 +161,26 @@ end
 
 local barBgFrames = {}
 
+-- Plain frame + texture backdrop (NOT BackdropTemplate). BackdropTemplate's
+-- SetupTextureCoordinates calls GetWidth() in Lua; anchored to a Blizzard frame
+-- whose width is a secret value (unit frames in instances, 12.0.5), that
+-- arithmetic taints and errors in Backdrop.lua. A plain texture anchors at the
+-- C level with no Lua width math. Mirrors Tooltip.lua / PartyFrames.lua.
+local function CreatePlainBackdrop(parent)
+    local bd = CreateFrame("Frame", nil, parent)
+    bd:SetAllPoints(parent)
+    local tex = bd:CreateTexture(nil, "BACKGROUND")
+    tex:SetAllPoints()
+    local c = C.BACKDROP_COLOR
+    tex:SetColorTexture(c[1], c[2], c[3], c[4])
+    return bd
+end
+
 local function CreateBarBackground(bar)
     if not bar or barBgFrames[bar] then return end
 
-    local bd = CreateFrame("Frame", nil, bar, "BackdropTemplate")
+    local bd = CreatePlainBackdrop(bar)
     bd:SetFrameLevel(math.max(0, bar:GetFrameLevel() - 1))
-    bd:SetAllPoints(bar)
-    SE:ApplyBackdrop(bd)
     barBgFrames[bar] = bd
 end
 
@@ -1023,11 +1036,10 @@ local function SkinAuraButton(button)
         end
     end
 
-    -- Flat backdrop behind icon
-    local bd = CreateFrame("Frame", nil, button, "BackdropTemplate")
-    bd:SetAllPoints(button)
+    -- Flat backdrop behind icon (plain frame + texture — avoids BackdropTemplate
+    -- secret-width taint; aura buttons carry secret width in instances)
+    local bd = CreatePlainBackdrop(button)
     bd:SetFrameLevel(math.max(button:GetFrameLevel() - 1, 0))
-    SE:ApplyBackdrop(bd)
 end
 
 local function SkinFrameAuras(frame)
