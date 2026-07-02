@@ -51,15 +51,21 @@ end
 local function OnItemUpdated(ctx, itemProto, decoration)
     if not decoration then return end
 
-    -- SCOPE TO OUR THEME BY OWNERSHIP. Our theme's ItemButton hook is only called
-    -- (and only creates + keys a bdFrame) while PadleyUI is the ACTIVE theme, so
-    -- decorationBorders contains exactly our decorations. When another theme is
-    -- active, BB fires item/Updated with ITS decorations, which are NOT in our
-    -- table — we must do nothing, or we'd hide BB's own rarity border and draw no
-    -- replacement (borders vanish in every theme). Look up only; never create on
-    -- demand, never touch a foreign decoration's IconBorder.
-    local bdFrame = decorationBorders[decoration]
-    if not bdFrame then return end
+    -- SCOPE TO OUR THEME BY DECORATION NAME. BetterBags names each theme's
+    -- decorations "<button>Decoration<themeKey>"; ours therefore end in
+    -- "DecorationPadleyUI" (confirmed in-game). When another theme is active BB
+    -- fires item/Updated with ITS decorations (different suffix) and we must not
+    -- touch them, or we'd hide BB's own rarity border and draw no replacement
+    -- (borders vanish in every theme). This scopes us with no dependency on BB's
+    -- current-theme API.
+    local name = decoration.GetName and decoration:GetName()
+    if not name or not name:find("DecorationPadleyUI$") then return end
+
+    -- Create-on-demand: BB calls our theme's ItemButton every render, so the
+    -- decoration handed to item/Updated may not have a border frame keyed yet
+    -- (lookup-only missed a shifting subset -> the observed randomness).
+    -- EnsureBorderFrame is idempotent — it reuses the per-decoration bdFrame.
+    local bdFrame = EnsureBorderFrame(decoration)
 
     -- Keep OUR decoration's rounded IconBorder invisible (BB re-textures/re-shows
     -- it each render, so re-assert here rather than relying on a one-time hide).
