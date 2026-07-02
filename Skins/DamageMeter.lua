@@ -62,6 +62,56 @@ local function SkinEntry(entry)
 end
 
 ---------------------------------------------------------------------------
+-- Entry iteration / hook wiring
+--
+-- A 12.0.x patch moved the session window from FIELD access (window.ScrollBox,
+-- window.LocalPlayerEntry) to METHOD access (window:SetupEntry,
+-- window:ForEachEntryFrame, window:GetLocalPlayerEntry). SkinEntry is now
+-- reached through those methods; every call is guarded so a future structure
+-- change fails soft instead of erroring.
+---------------------------------------------------------------------------
+
+-- Skin whichever argument is a Frame. Defensive against SetupEntry's exact
+-- signature (self is the explicit first param, so it is never in ...).
+local function SkinFrameArgs(...)
+    for i = 1, select("#", ...) do
+        local arg = select(i, ...)
+        if type(arg) == "table" and arg.IsObjectType and arg:IsObjectType("Frame") then
+            SkinEntry(arg)
+        end
+    end
+end
+
+local function WireEntrySkinning(window)
+    if not window then return end
+
+    -- Primary re-skin trigger: Blizzard calls SetupEntry per row when it builds
+    -- or refreshes an entry. Hook the instance and skin the entry frame it hands
+    -- us. Only applies textures (SkinEntry reads no values), so it is safe on
+    -- this potentially-secure path.
+    if window.SetupEntry then
+        hooksecurefunc(window, "SetupEntry", function(self, ...)
+            SkinFrameArgs(...)
+        end)
+    end
+
+    -- Initial sweep for rows that already exist at install time.
+    if window.ForEachEntryFrame then
+        window:ForEachEntryFrame(function(...)
+            SkinFrameArgs(...)
+        end)
+    end
+
+    -- Local player row (fixed bar). SetupEntry covers its subsequent refreshes.
+    if window.GetLocalPlayerEntry then
+        local localEntry = window:GetLocalPlayerEntry()
+        if localEntry then
+            SkinEntry(localEntry)
+        end
+    end
+end
+
+---------------------------------------------------------------------------
 -- Source / Detail Window
 ---------------------------------------------------------------------------
 
@@ -87,26 +137,8 @@ local function SkinSourceWindow(sourceWindow)
     local bgc = C.BACKDROP_COLOR
     bdFrame:SetBackdropColor(bgc[1], bgc[2], bgc[3], bgc[4])
 
-    -- Skin spell entry bars in the source window ScrollBox
-    local scrollBox = sourceWindow.ScrollBox
-    if scrollBox then
-        if scrollBox.Update then
-            hooksecurefunc(scrollBox, "Update", function(self)
-                if self.ForEachFrame then
-                    self:ForEachFrame(function(entry)
-                        SkinEntry(entry)
-                    end)
-                end
-            end)
-        end
-
-        -- Skin any entries already visible
-        if scrollBox.ForEachFrame then
-            scrollBox:ForEachFrame(function(entry)
-                SkinEntry(entry)
-            end)
-        end
-    end
+    -- Skin spell entry bars in the source window (method-based API).
+    WireEntrySkinning(sourceWindow)
 end
 
 ---------------------------------------------------------------------------
@@ -194,71 +226,11 @@ local function SkinSessionWindow(window)
         end
     end
 
-    -- Register hooks immediately (safe — no layout changes)
-    local scrollBox = window.ScrollBox
-    if scrollBox then
-        -- Hook ScrollBox Update on the INSTANCE to skin entries after
-        -- secure Init/SetStyle calls are complete.
-        if scrollBox.Update then
-            hooksecurefunc(scrollBox, "Update", function(self)
-                if self.ForEachFrame then
-                    self:ForEachFrame(function(entry)
-                        SkinEntry(entry)
-                    end)
-                end
-            end)
-        end
-
-        -- Skin any entries already visible
-        if scrollBox.ForEachFrame then
-            scrollBox:ForEachFrame(function(entry)
-                SkinEntry(entry)
-            end)
-        end
-    end
-
-    -- Local player entry (fixed bar, not in ScrollBox)
-    local localEntry = window.LocalPlayerEntry
-    if localEntry then
-        SkinEntry(localEntry)
-
-        -- Hook Init on the INSTANCE to re-skin after data updates
-        if localEntry.Init then
-            hooksecurefunc(localEntry, "Init", function(self)
-                SkinEntry(self)
-            end)
-        end
-    end
-
-    -- Hook RefreshLayout on the INSTANCE to re-apply ScrollBox anchors
-    -- after Blizzard resets them during layout updates.
-    if window.RefreshLayout then
-        hooksecurefunc(window, "RefreshLayout", function(self)
-            local sb = self.ScrollBox
-            if sb then
-                sb:ClearAllPoints()
-                sb:SetPoint("TOPLEFT", self, "TOPLEFT", 1, -30)
-                sb:SetPoint("BOTTOMRIGHT", self, "BOTTOMRIGHT", -1, 1)
-            end
-        end)
-    end
-
-    -- Defer layout-changing repositioning to next frame.
-    -- ClearAllPoints/SetPoint on the ScrollBox triggers a layout cascade
-    -- (SetDataProvider → Refresh) that runs synchronously inside our
-    -- tainted SetupSessionWindow post-hook, causing secret value errors.
-    C_Timer.After(0, function()
-        if scrollBox then
-            scrollBox:ClearAllPoints()
-            scrollBox:SetPoint("TOPLEFT", window, "TOPLEFT", 1, -30)
-            scrollBox:SetPoint("BOTTOMRIGHT", window, "BOTTOMRIGHT", -1, 1)
-        end
-        if localEntry then
-            localEntry:ClearAllPoints()
-            localEntry:SetPoint("BOTTOMLEFT", window, "BOTTOMLEFT", 1, 1)
-            localEntry:SetPoint("BOTTOMRIGHT", window, "BOTTOMRIGHT", -1, 1)
-        end
-    end)
+    -- Wire up entry bar skinning via the method-based API. Blizzard manages the
+    -- scroll area's layout internally now (the old ScrollBox / LocalPlayerEntry
+    -- fields were removed), so we no longer custom-anchor it — we only skin the
+    -- rows Blizzard lays out.
+    WireEntrySkinning(window)
 
     -- Skin the source window
     local sourceWindow = window.SourceWindow
