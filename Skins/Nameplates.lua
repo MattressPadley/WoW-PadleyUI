@@ -435,7 +435,16 @@ local function SyncNameText(unitFrame)
     if not overlay then return end
     if not unitFrame.unit then return end
 
-    overlay:SetText(UnitName(unitFrame.unit) or "")
+    -- 12.0.5: UnitName can return a secret string on restricted maps (instances).
+    -- `secret or ""` would be a boolean test on a secret value -> Lua error.
+    -- SetText accepts a secret string directly (marks the Text aspect secret),
+    -- so pass it through when secret and only apply the "" fallback for nil.
+    local name = UnitName(unitFrame.unit)
+    if issecretvalue and issecretvalue(name) then
+        overlay:SetText(name)
+    else
+        overlay:SetText(name or "")
+    end
 end
 
 local function StyleAllText(unitFrame)
