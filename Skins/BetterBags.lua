@@ -70,6 +70,22 @@ local function OnItemUpdated(ctx, itemProto, decoration)
     ResetBorderColor(bdFrame)
 end
 
+-- Catch-up sweep. BetterBags loads before us (OptionalDep) and fires
+-- item/Updated for the already-visible slots during its first render — before
+-- our handler is registered — so those items miss our colour (a different subset
+-- each reload, depending on interleaving). Re-run our colouring over every
+-- decoration we've created, reading the item's current quality directly. The
+-- itemProto our ItemButton hook receives is the SAME object BB passes to
+-- item/Updated, so we stashed it per entry. Side-effect-free (only sets our
+-- border + IconBorder alpha, never triggers a BB refresh) → safe, no loop.
+local function ColorAllKnownItems()
+    for _, entry in pairs(itemButtons) do
+        if entry.decoration and entry.item then
+            OnItemUpdated(nil, entry.item, entry.decoration)
+        end
+    end
+end
+
 ---------------------------------------------------------------------------
 -- Helper: shared decoration with flat backdrop
 ---------------------------------------------------------------------------
@@ -242,6 +258,7 @@ function BetterBagsSkin:Apply()
             local buttonName = item.button:GetName()
             local entry = itemButtons[buttonName]
             if entry then
+                entry.item = item  -- keep the proto fresh for the catch-up sweep
                 entry.decoration:Show()
                 return entry.decoration
             end
@@ -294,7 +311,7 @@ function BetterBagsSkin:Apply()
             -- applied by the "item/Updated" handler (registered in Apply).
             local bdFrame = EnsureBorderFrame(decoration)
 
-            itemButtons[buttonName] = { decoration = decoration, bdFrame = bdFrame }
+            itemButtons[buttonName] = { decoration = decoration, bdFrame = bdFrame, item = item }
             return decoration
         end,
     }
@@ -307,5 +324,11 @@ function BetterBagsSkin:Apply()
     local events = bb.GetModule and bb:GetModule('Events', true)
     if events and events.RegisterMessage then
         events:RegisterMessage('item/Updated', OnItemUpdated)
+        -- Colour everything already rendered before this subscription, then again
+        -- next frame to catch any slots drawn synchronously right after. Async
+        -- item info (quality nil on first render) is handled by the live handler
+        -- when BB re-fires item/Updated on GET_ITEM_INFO_RECEIVED.
+        ColorAllKnownItems()
+        C_Timer.After(0, ColorAllKnownItems)
     end
 end
