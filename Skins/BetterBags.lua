@@ -50,10 +50,19 @@ end
 
 local function OnItemUpdated(ctx, itemProto, decoration)
     if not decoration then return end
-    local bdFrame = EnsureBorderFrame(decoration)
 
-    -- Keep BB's own rounded IconBorder invisible (it re-textures/re-shows it each
-    -- render, so re-assert here rather than relying on a one-time hide).
+    -- SCOPE TO OUR THEME BY OWNERSHIP. Our theme's ItemButton hook is only called
+    -- (and only creates + keys a bdFrame) while PadleyUI is the ACTIVE theme, so
+    -- decorationBorders contains exactly our decorations. When another theme is
+    -- active, BB fires item/Updated with ITS decorations, which are NOT in our
+    -- table — we must do nothing, or we'd hide BB's own rarity border and draw no
+    -- replacement (borders vanish in every theme). Look up only; never create on
+    -- demand, never touch a foreign decoration's IconBorder.
+    local bdFrame = decorationBorders[decoration]
+    if not bdFrame then return end
+
+    -- Keep OUR decoration's rounded IconBorder invisible (BB re-textures/re-shows
+    -- it each render, so re-assert here rather than relying on a one-time hide).
     if decoration.IconBorder then
         decoration.IconBorder:SetAlpha(0)
     end
