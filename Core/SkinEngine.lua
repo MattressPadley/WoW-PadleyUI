@@ -6,6 +6,7 @@ ns.SkinEngine = SkinEngine
 
 local hookedTextures = {}
 local hookedAtlases = {}
+local backdropFills = {}
 
 --- Strip all textures from a frame's regions.
 --- @param frame table The frame to strip
@@ -25,29 +26,41 @@ function SkinEngine:StripTextures(frame, kill)
     end
 end
 
---- Apply a flat backdrop with pixel border to a frame.
---- NOTE: If `frame` already has SetBackdrop (e.g. inherits BackdropTemplate),
---- this calls SetBackdrop directly on it. Do NOT use on Blizzard frames shown
---- in secure contexts (tooltips, etc.) — create a child BackdropTemplate instead.
+--- Apply a flat (fill-only) backdrop to a frame.
+--- Uses a plain BACKGROUND texture + SetColorTexture rather than SetBackdrop, so
+--- it is safe on ANY frame — including Blizzard frames whose width is a secret
+--- value (12.0.5). SetBackdrop routes through Backdrop.lua's
+--- SetupTextureCoordinates, which does GetWidth() arithmetic and taints/errors
+--- on secret widths; a SetAllPoints texture anchors at the C level with no Lua
+--- width math. (WHITE8x8 tinted by SetBackdropColor is identical to a
+--- SetColorTexture fill, so the look is unchanged.)
 --- @param frame table The target frame
---- @param opts table|nil Optional overrides { bgColor, borderColor, borderSize }
+--- @param opts table|nil Optional overrides { bgColor }
 function SkinEngine:ApplyBackdrop(frame, opts)
     opts = opts or {}
 
-    -- If frame already has SetBackdrop (addon-created BackdropTemplate frames),
-    -- apply directly. Otherwise create a child frame to avoid Mixin taint.
+    -- Preserve the original target selection: if the caller passed a dedicated
+    -- backdrop frame (has SetBackdrop), fill it directly so same-frame draw-layer
+    -- ordering is kept (e.g. ClassPower draws its ARTWORK fill above this
+    -- BACKGROUND fill on the same frame). Otherwise create a plain child so we
+    -- never write regions onto an arbitrary (possibly Blizzard) frame.
     local target
     if frame.SetBackdrop then
         target = frame
     else
-        target = CreateFrame("Frame", nil, frame, "BackdropTemplate")
+        target = CreateFrame("Frame", nil, frame)
         target:SetAllPoints()
         target:SetFrameLevel(frame:GetFrameLevel())
     end
 
-    target:SetBackdrop({ bgFile = C.FLAT_BACKDROP.bgFile })
+    local tex = backdropFills[target]
+    if not tex then
+        tex = target:CreateTexture(nil, "BACKGROUND")
+        tex:SetAllPoints()
+        backdropFills[target] = tex
+    end
     local bg = opts.bgColor or C.BACKDROP_COLOR
-    target:SetBackdropColor(bg[1], bg[2], bg[3], bg[4])
+    tex:SetColorTexture(bg[1], bg[2], bg[3], bg[4])
 
     return target
 end
