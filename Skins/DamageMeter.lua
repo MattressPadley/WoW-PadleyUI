@@ -11,6 +11,49 @@ local skinnedWindows = {}
 local buttonDecorations = {}
 
 ---------------------------------------------------------------------------
+-- Window background helpers
+--
+-- Blizzard's window background/border art has moved fields across 12.0.x
+-- patches (the same field->method restructure that removed ScrollBox). Hide
+-- every candidate region that exists so only our flat backdrop shows, instead
+-- of relying on a single field name that can go stale (which left Blizzard's
+-- background stacked behind ours).
+---------------------------------------------------------------------------
+
+local BLIZZARD_BG_FIELDS = { "NineSlice", "Background", "Bg", "Border", "Header" }
+
+local function HideBlizzardBackground(frame)
+    for _, key in ipairs(BLIZZARD_BG_FIELDS) do
+        local region = frame[key]
+        if region and region.SetAlpha then
+            region:SetAlpha(0)
+            -- Only textures get their atlas/texture cleared + Hide; NineSlice is
+            -- a container frame, so alpha-0 alone (layout-preserving) is enough.
+            if region.GetObjectType and region:GetObjectType() == "Texture" then
+                if region.SetAtlas then region:SetAtlas("") end
+                if region.SetTexture then region:SetTexture(nil) end
+                region:Hide()
+            end
+        end
+    end
+end
+
+-- Flat backdrop via a plain frame + texture (NOT BackdropTemplate). SetAllPoints
+-- on a Blizzard window means BackdropTemplate's SetupTextureCoordinates would do
+-- arithmetic on the window's GetWidth(), which is a secret value during
+-- encounters -> taint. A plain texture anchors at the C level. Mirrors Tooltip.
+local function ApplyFlatWindowBackdrop(frame)
+    local bdFrame = CreateFrame("Frame", nil, frame)
+    bdFrame:SetAllPoints()
+    bdFrame:SetFrameLevel(frame:GetFrameLevel())
+    local tex = bdFrame:CreateTexture(nil, "BACKGROUND")
+    tex:SetAllPoints()
+    local bgc = C.BACKDROP_COLOR
+    tex:SetColorTexture(bgc[1], bgc[2], bgc[3], bgc[4])
+    return bdFrame
+end
+
+---------------------------------------------------------------------------
 -- Entry Bars
 ---------------------------------------------------------------------------
 
@@ -119,23 +162,9 @@ local function SkinSourceWindow(sourceWindow)
     if not sourceWindow or skinnedWindows[sourceWindow] then return end
     skinnedWindows[sourceWindow] = true
 
-    -- Strip the dropdown-style background
-    local bg = sourceWindow.Background
-    if bg then
-        bg:SetAtlas("")
-        bg:SetTexture(nil)
-        bg:Hide()
-    end
-
-    -- Separate backdrop frame (avoids Mixin on Blizzard frame)
-    local bdFrame = CreateFrame("Frame", nil, sourceWindow, "BackdropTemplate")
-    bdFrame:SetAllPoints()
-    bdFrame:SetFrameLevel(sourceWindow:GetFrameLevel())
-    bdFrame:SetBackdrop({
-        bgFile   = C.FLAT_BACKDROP.bgFile,
-    })
-    local bgc = C.BACKDROP_COLOR
-    bdFrame:SetBackdropColor(bgc[1], bgc[2], bgc[3], bgc[4])
+    -- Hide Blizzard's own background/border, then apply our flat one.
+    HideBlizzardBackground(sourceWindow)
+    ApplyFlatWindowBackdrop(sourceWindow)
 
     -- Skin spell entry bars in the source window (method-based API).
     WireEntrySkinning(sourceWindow)
@@ -149,31 +178,9 @@ local function SkinSessionWindow(window)
     if skinnedWindows[window] then return end
     skinnedWindows[window] = true
 
-    -- Strip the default background atlas
-    local bg = window.Background
-    if bg then
-        bg:SetAtlas("")
-        bg:SetTexture(nil)
-        bg:Hide()
-    end
-
-    -- Strip the header bar atlas
-    local header = window.Header
-    if header then
-        header:SetAtlas("")
-        header:SetTexture(nil)
-        header:Hide()
-    end
-
-    -- Flat backdrop via a separate frame (avoids Mixin/writing keys on window)
-    local bdFrame = CreateFrame("Frame", nil, window, "BackdropTemplate")
-    bdFrame:SetAllPoints()
-    bdFrame:SetFrameLevel(window:GetFrameLevel())
-    bdFrame:SetBackdrop({
-        bgFile   = C.FLAT_BACKDROP.bgFile,
-    })
-    local bgc = C.BACKDROP_COLOR
-    bdFrame:SetBackdropColor(bgc[1], bgc[2], bgc[3], bgc[4])
+    -- Hide Blizzard's own background/border/header, then apply our flat one.
+    HideBlizzardBackground(window)
+    ApplyFlatWindowBackdrop(window)
 
     -- NOTE: Do NOT call StyleFont on window.NotActive or window.SessionTimer.
     -- These FontStrings are read during secure Refresh execution.
