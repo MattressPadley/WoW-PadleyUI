@@ -6,40 +6,68 @@ ns.BetterBagsSkin = BetterBagsSkin
 
 local decoratorFrames = {}  -- frame name -> decoration
 local itemButtons = {}      -- button name -> { decoration, bdFrame }
-local decorationBorders = {}  -- decoration frame AND item button -> bdFrame
-local mirroredBorders = {}  -- IconBorder -> true (avoid double-hooking)
+local decorationBorders = {}  -- decoration frame -> bdFrame
 
 ---------------------------------------------------------------------------
 -- Helper: rarity border colouring
+--
+-- BetterBags renders each slot as a decoration ItemButton and drives all quality
+-- visuals on it (SetItemButtonQuality + a per-render IconBorder texture swap),
+-- then fires the "item/Updated" (ctx, itemProto, decoration) message. We colour
+-- our own flat border in that handler — it runs after BB's own colouring each
+-- render, so it survives sort/refresh and BB's texture re-stomp.
 ---------------------------------------------------------------------------
 
 local function ResetBorderColor(bdFrame)
     bdFrame:SetBackdropBorderColor(C.BORDER_COLOR[1], C.BORDER_COLOR[2], C.BORDER_COLOR[3], C.BORDER_COLOR[4])
 end
 
--- Keep an ItemButton's rounded IconBorder invisible and mirror its rarity
--- colour onto our flat bdFrame. Safe to call for both the decoration's and the
--- underlying button's IconBorder (deduped by object) — BetterBags drives the
--- quality colour on the real item button, not our blank decoration.
-local function MirrorIconBorder(iconBorder, bdFrame)
-    if not iconBorder then return end
-    iconBorder:SetAlpha(0)
-    if mirroredBorders[iconBorder] then return end
-    mirroredBorders[iconBorder] = true
+local function QualityColor(q)
+    if C_Item and C_Item.GetItemQualityColor then
+        return C_Item.GetItemQualityColor(q)
+    elseif GetItemQualityColor then
+        return GetItemQualityColor(q)
+    end
+end
 
-    hooksecurefunc(iconBorder, "Show", function(self)
-        self:SetAlpha(0)
-    end)
-    hooksecurefunc(iconBorder, "SetVertexColor", function(_, r, g, b)
-        if r and g and b and not (r == 1 and g == 1 and b == 1) then
+-- Our flat border frame lives on the decoration. Created here so it exists even
+-- if item/Updated fires for a decoration our ItemButton hook hasn't set up yet.
+local function EnsureBorderFrame(decoration)
+    local bdFrame = decorationBorders[decoration]
+    if bdFrame then return bdFrame end
+
+    bdFrame = CreateFrame("Frame", nil, decoration, "BackdropTemplate")
+    bdFrame:SetAllPoints()
+    bdFrame:SetFrameLevel(math.max(decoration:GetFrameLevel() - 1, 0))
+    bdFrame:SetBackdrop(C.FLAT_BACKDROP)
+    bdFrame:SetBackdropColor(C.BACKDROP_COLOR[1], C.BACKDROP_COLOR[2], C.BACKDROP_COLOR[3], C.BACKDROP_COLOR[4])
+    bdFrame:SetBackdropBorderColor(C.BORDER_COLOR[1], C.BORDER_COLOR[2], C.BORDER_COLOR[3], C.BORDER_COLOR[4])
+    bdFrame:EnableMouse(false)
+
+    decorationBorders[decoration] = bdFrame
+    return bdFrame
+end
+
+local function OnItemUpdated(ctx, itemProto, decoration)
+    if not decoration then return end
+    local bdFrame = EnsureBorderFrame(decoration)
+
+    -- Keep BB's own rounded IconBorder invisible (it re-textures/re-shows it each
+    -- render, so re-assert here rather than relying on a one-time hide).
+    if decoration.IconBorder then
+        decoration.IconBorder:SetAlpha(0)
+    end
+
+    local info = itemProto and itemProto.data and itemProto.data.itemInfo
+    local q = info and info.itemQuality
+    if q and q >= 2 then
+        local r, g, b = QualityColor(q)
+        if r then
             bdFrame:SetBackdropBorderColor(r, g, b, 1)
-        else
-            ResetBorderColor(bdFrame)
+            return
         end
-    end)
-    hooksecurefunc(iconBorder, "Hide", function()
-        ResetBorderColor(bdFrame)
-    end)
+    end
+    ResetBorderColor(bdFrame)
 end
 
 ---------------------------------------------------------------------------
@@ -262,27 +290,9 @@ function BetterBagsSkin:Apply()
                 if decoration.IconTexture then ht:SetAllPoints(decoration.IconTexture) end
             end
 
-            -- Child backdrop behind icon for our flat border
-            local bdFrame = CreateFrame("Frame", nil, decoration, "BackdropTemplate")
-            bdFrame:SetAllPoints()
-            bdFrame:SetFrameLevel(math.max(decoration:GetFrameLevel() - 1, 0))
-            bdFrame:SetBackdrop(C.FLAT_BACKDROP)
-            bdFrame:SetBackdropColor(C.BACKDROP_COLOR[1], C.BACKDROP_COLOR[2], C.BACKDROP_COLOR[3], C.BACKDROP_COLOR[4])
-            bdFrame:SetBackdropBorderColor(C.BORDER_COLOR[1], C.BORDER_COLOR[2], C.BORDER_COLOR[3], C.BORDER_COLOR[4])
-            bdFrame:EnableMouse(false)
-
-            -- Mirror the rarity colour onto our flat border. BetterBags renders
-            -- item icon/quality on the underlying item button, not on our blank
-            -- decoration, so the real colour arrives on the BUTTON's IconBorder
-            -- (and via SetItemButtonQuality(button, ...)). Mirror both IconBorders
-            -- and key the lookup by both objects so quality resolves regardless of
-            -- which one BetterBags drives.
-            local button = item.button
-            MirrorIconBorder(decoration.IconBorder, bdFrame)
-            MirrorIconBorder(button and button.IconBorder, bdFrame)
-
-            decorationBorders[decoration] = bdFrame
-            if button then decorationBorders[button] = bdFrame end
+            -- Child backdrop behind icon for our flat border. Rarity colour is
+            -- applied by the "item/Updated" handler (registered in Apply).
+            local bdFrame = EnsureBorderFrame(decoration)
 
             itemButtons[buttonName] = { decoration = decoration, bdFrame = bdFrame }
             return decoration
@@ -291,14 +301,11 @@ function BetterBagsSkin:Apply()
 
     themes:RegisterTheme('PadleyUI', padleyTheme)
 
-    hooksecurefunc("SetItemButtonQuality", function(button, quality)
-        local bdFrame = decorationBorders[button]
-        if not bdFrame then return end
-        if quality and quality >= 2 and ITEM_QUALITY_COLORS and ITEM_QUALITY_COLORS[quality] then
-            local c = ITEM_QUALITY_COLORS[quality]
-            bdFrame:SetBackdropBorderColor(c.r, c.g, c.b, 1)
-        else
-            ResetBorderColor(bdFrame)
-        end
-    end)
+    -- Rarity border colouring: subscribe to BetterBags' item/Updated message,
+    -- which fires after BB has set the item's quality + border texture on the
+    -- decoration each render. Guarded so a missing module / API fails soft.
+    local events = bb.GetModule and bb:GetModule('Events', true)
+    if events and events.RegisterMessage then
+        events:RegisterMessage('item/Updated', OnItemUpdated)
+    end
 end
