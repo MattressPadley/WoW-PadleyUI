@@ -16,6 +16,14 @@ local skinnedAuras = {}
 local settingTexture = {}
 local settingColor = {}
 
+-- Spacing re-anchor state. CompactRaidFrame*/CompactPartyFrameMember* are
+-- PROTECTED frames — re-anchoring them in combat raises ADDON_ACTION_BLOCKED,
+-- so we queue the nudge and flush it on PLAYER_REGEN_ENABLED. spacedOffsets
+-- records the offset we last applied per frame so we don't re-nudge (and double
+-- the gap) when Blizzard hasn't reset the layout.
+local spacedOffsets = {}
+local spacingPending = false
+
 ---------------------------------------------------------------------------
 -- Utility
 ---------------------------------------------------------------------------
@@ -379,24 +387,47 @@ end
 ---------------------------------------------------------------------------
 
 local function ApplySpacing(prefix, count)
+    -- Never re-anchor protected raid/party frames during combat — every
+    -- ClearAllPoints/SetPoint is blocked (ADDON_ACTION_BLOCKED). Queue it and
+    -- flush once combat ends (PLAYER_REGEN_ENABLED).
+    if InCombatLockdown() then
+        spacingPending = true
+        return
+    end
+
     for i = 2, count do
         local frame = _G[prefix .. i]
         if not frame then break end
         local point, rel, relPoint, x, y = frame:GetPoint()
         if not point then break end
 
-        -- Determine axis from the anchor and nudge the offset
-        local isVertical = (y ~= 0 and x == 0)
-        local isHorizontal = (x ~= 0 and y == 0)
+        -- Idempotent: if the frame is already at the offset we last applied,
+        -- Blizzard hasn't reset the layout, so skip it. This avoids re-adding
+        -- FRAME_SPACING every roster tick (which would compound the gap and
+        -- thrash the layout).
+        local last = spacedOffsets[frame]
+        if not (last and last.point == point and last.rel == rel
+                and last.relPoint == relPoint and last.x == x and last.y == y) then
+            -- Determine axis from the anchor and nudge the offset
+            local isVertical = (y ~= 0 and x == 0)
+            local isHorizontal = (x ~= 0 and y == 0)
+            local nx, ny = x, y
 
-        if isVertical then
-            local sign = y < 0 and -1 or 1
-            frame:ClearAllPoints()
-            frame:SetPoint(point, rel, relPoint, x, y + sign * C.FRAME_SPACING)
-        elseif isHorizontal then
-            local sign = x < 0 and -1 or 1
-            frame:ClearAllPoints()
-            frame:SetPoint(point, rel, relPoint, x + sign * C.FRAME_SPACING, y)
+            if isVertical then
+                local sign = y < 0 and -1 or 1
+                ny = y + sign * C.FRAME_SPACING
+            elseif isHorizontal then
+                local sign = x < 0 and -1 or 1
+                nx = x + sign * C.FRAME_SPACING
+            end
+
+            if nx ~= x or ny ~= y then
+                frame:ClearAllPoints()
+                frame:SetPoint(point, rel, relPoint, nx, ny)
+                spacedOffsets[frame] = {
+                    point = point, rel = rel, relPoint = relPoint, x = nx, y = ny,
+                }
+            end
         end
     end
 end
@@ -469,6 +500,7 @@ function PartyFrameSkin:Apply()
     eventFrame:RegisterEvent("GROUP_ROSTER_UPDATE")
     eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
     eventFrame:RegisterEvent("UNIT_DISPLAYPOWER")
+    eventFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
     eventFrame:SetScript("OnEvent", function(self, event, arg1)
         if event == "GROUP_ROSTER_UPDATE" or event == "PLAYER_ENTERING_WORLD" then
             -- Defer to next frame so Blizzard has time to create/assign frames
@@ -477,6 +509,15 @@ function PartyFrameSkin:Apply()
                 ScanRaidFrames()
                 HideTitles()
             end)
+        elseif event == "PLAYER_REGEN_ENABLED" then
+            -- Combat ended: flush any spacing re-anchor that was blocked in combat.
+            if spacingPending then
+                spacingPending = false
+                C_Timer.After(0, function()
+                    ApplySpacing("CompactPartyFrameMember", 5)
+                    ApplySpacing("CompactRaidFrame", 40)
+                end)
+            end
         elseif event == "UNIT_DISPLAYPOWER" then
             -- Refresh power color when power type changes
             for i = 1, 5 do
