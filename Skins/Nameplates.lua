@@ -55,6 +55,8 @@ local AURA_GAP = 2
 local BUFF_PAD = 4  -- gap between rightmost buff icon and health bar left edge
 local CC_PAD = 4    -- gap between leftmost CC icon and health bar right edge
 
+local QUESTION_MARK = 134400  -- INV_Misc_QuestionMark, neutral placeholder
+
 -- Fallback if GetUnitAuras doesn't exist (pre-TWW)
 local function GetUnitAurasSafe(unit, filter)
     if C_UnitAuras.GetUnitAuras then
@@ -208,8 +210,18 @@ local function ShowCustomCastBar(unitFrame, spellID, isChannelKnown)
         return
     end
 
-    -- Widget APIs accept secret values
-    if custom.icon then custom.icon:SetTexture(spellIcon) end
+    -- spellIcon is a plain fileID on the common GetSpellInfo(spellID) path, but
+    -- the UnitCastingInfo/UnitChannelInfo fallback can be secret on a restricted
+    -- unit. SetTexture(secret) silently renders a white box, so swap to a neutral
+    -- placeholder. (This icon is also read back via GetTexture() for the kick
+    -- overlay, so guarding here keeps that path non-secret too.)
+    if custom.icon then
+        if issecretvalue and issecretvalue(spellIcon) then
+            custom.icon:SetTexture(QUESTION_MARK)
+        else
+            custom.icon:SetTexture(spellIcon)
+        end
+    end
     if custom.text and spellName then custom.text:SetText(spellName) end
 
     -- SetTimerDuration handles bar animation natively — no OnUpdate needed
@@ -941,6 +953,28 @@ local function CreateAuraFrames(unitFrame)
     auraState[unitFrame] = { buffCount = 0, debuffCount = 0, ccCount = 0 }
 end
 
+-- Set an aura icon defensively. In 12.0 aura.icon can arrive as a Secret Value
+-- on restricted units; SetTexture(secret) silently renders an untextured white
+-- box (no error). Fall back to a spellId lookup, then a neutral placeholder.
+local function SetAuraIcon(texture, aura)
+    local icon = aura.icon
+    if icon and not (issecretvalue and issecretvalue(icon)) then
+        texture:SetTexture(icon)
+        return
+    end
+    -- icon is secret or nil: try a spellId-based lookup (may also be secret)
+    local spellId = aura.spellId
+    if spellId and not (issecretvalue and issecretvalue(spellId)) and C_Spell and C_Spell.GetSpellTexture then
+        local t = C_Spell.GetSpellTexture(spellId)
+        if t and not (issecretvalue and issecretvalue(t)) then
+            texture:SetTexture(t)
+            return
+        end
+    end
+    -- last resort: neutral placeholder, never a white box
+    texture:SetTexture(QUESTION_MARK)
+end
+
 -- Blacklist check: skip when spellId is secret (aura shows normally in that case).
 local function IsAuraBlacklisted(blacklist, unit, instanceID)
     local data = C_UnitAuras.GetAuraDataByAuraInstanceID(unit, instanceID)
@@ -979,7 +1013,7 @@ local function UpdateAuras(unitFrame)
             ccIdx = ccIdx + 1
             ccIDs[aura.auraInstanceID] = true
             local slot = frames.cc[ccIdx]
-            slot.icon:SetTexture(aura.icon)
+            SetAuraIcon(slot.icon, aura)
             slot.frame.auraUnit = unit
             slot.frame.auraInstanceID = aura.auraInstanceID
             local dur = C_UnitAuras.GetAuraDuration(unit, aura.auraInstanceID)
@@ -997,7 +1031,7 @@ local function UpdateAuras(unitFrame)
             and not IsAuraBlacklisted(blacklist, unit, aura.auraInstanceID) then
             buffIdx = buffIdx + 1
             local slot = frames.buffs[buffIdx]
-            slot.icon:SetTexture(aura.icon)
+            SetAuraIcon(slot.icon, aura)
             slot.frame.auraUnit = unit
             slot.frame.auraInstanceID = aura.auraInstanceID
             local dur = C_UnitAuras.GetAuraDuration(unit, aura.auraInstanceID)
@@ -1014,7 +1048,7 @@ local function UpdateAuras(unitFrame)
             if not IsAuraBlacklisted(blacklist, unit, aura.auraInstanceID) then
                 debuffIdx = debuffIdx + 1
                 local slot = frames.debuffs[debuffIdx]
-                slot.icon:SetTexture(aura.icon)
+                SetAuraIcon(slot.icon, aura)
                 slot.frame.auraUnit = unit
                 slot.frame.auraInstanceID = aura.auraInstanceID
                 local dur = C_UnitAuras.GetAuraDuration(unit, aura.auraInstanceID)
