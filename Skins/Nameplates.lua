@@ -953,26 +953,20 @@ local function CreateAuraFrames(unitFrame)
     auraState[unitFrame] = { buffCount = 0, debuffCount = 0, ccCount = 0 }
 end
 
--- Set an aura icon defensively. In 12.0 aura.icon can arrive as a Secret Value
--- on restricted units; SetTexture(secret) silently renders an untextured white
--- box (no error). Fall back to a spellId lookup, then a neutral placeholder.
+-- Set an aura icon defensively. In 12.0 the whole UnitAuraInfo struct is
+-- SecretWhenUnitAuraRestricted on hostile/target/combat units. A field-level
+-- issecretvalue(aura.icon) MISSES this — it's the table that's restricted, so
+-- reading .icon yields an opaque value that SetTexture renders as a white box.
+-- canaccesstable(aura) tests whether our context can read the struct's fields.
+-- spellId inherits the same secrecy, so there is no icon fallback — use a
+-- placeholder. If canaccesstable doesn't exist, skip the guard (old behavior)
+-- rather than blanketing every aura with a placeholder.
 local function SetAuraIcon(texture, aura)
-    local icon = aura.icon
-    if icon and not (issecretvalue and issecretvalue(icon)) then
-        texture:SetTexture(icon)
+    if canaccesstable and not canaccesstable(aura) then
+        texture:SetTexture(QUESTION_MARK)
         return
     end
-    -- icon is secret or nil: try a spellId-based lookup (may also be secret)
-    local spellId = aura.spellId
-    if spellId and not (issecretvalue and issecretvalue(spellId)) and C_Spell and C_Spell.GetSpellTexture then
-        local t = C_Spell.GetSpellTexture(spellId)
-        if t and not (issecretvalue and issecretvalue(t)) then
-            texture:SetTexture(t)
-            return
-        end
-    end
-    -- last resort: neutral placeholder, never a white box
-    texture:SetTexture(QUESTION_MARK)
+    texture:SetTexture(aura.icon or QUESTION_MARK)
 end
 
 -- Blacklist check: skip when spellId is secret (aura shows normally in that case).
