@@ -114,8 +114,12 @@ function TooltipSkin:Apply()
         SkinHealthBar(GameTooltip)
     end
 
-    -- Hook GameTooltip:Show to catch lazy tooltips on first appearance
-    if GameTooltip and GameTooltip.Show then
-        hooksecurefunc(GameTooltip, "Show", SkinLazyTooltips)
+    -- Catch lazy tooltips (ShoppingTooltip1/2) on first appearance via the
+    -- C-dispatched OnShow handler. HookScript is isolated per taint rules;
+    -- hooksecurefunc(GameTooltip, "Show", ...) leaks the addon's insecure
+    -- taint into the tooltip-build execution and breaks secret-number
+    -- arithmetic in GameTooltip_AddWidgetSet (AreaPOI item-display widgets).
+    if GameTooltip then
+        GameTooltip:HookScript("OnShow", SkinLazyTooltips)
     end
 end
