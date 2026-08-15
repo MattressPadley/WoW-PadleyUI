@@ -18,6 +18,9 @@ local kickOverlays = {}   -- keyed by UnitFrame → { frame, bar, icon, text, ti
 
 -- Custom bars overlaid on Blizzard's (alpha-zeroed) bars
 local customHealthBars = {}   -- Blizzard healthBar → our StatusBar
+-- Addon-owned cast bar. Blizzard has no nameplate cast bar to overlay in 12.1
+-- (unitFrame.castBar is nil), so this one stands alone.
+local customCastBars = {}     -- UnitFrame → { container, bar, icon, iconBg, shield, text }
 local blizzardHealthColors = {} -- Blizzard healthBar → { r, g, b } (cached reaction color)
 local absorbBars = {}            -- UnitFrame → our absorb StatusBar
 local healCalcs = {}             -- UnitFrame → per-instance calculator
@@ -517,19 +520,19 @@ local function CreateKickOverlay(unitFrame)
     if not customHB or kickOverlays[unitFrame] then return end
 
     local plate = unitFrame:GetParent()
-    local castBar = unitFrame.castBar
 
     local barWidth = ns.Config:Get("nameplates", "width")
     local barHeight = ns.Config:Get("nameplates", "height")
     local iconSize = barHeight
     local iconGap = 2
 
-    -- Container frame parented to the nameplate (not castBar) so it stays visible
-    -- when Blizzard hides castBar on interrupt
+    -- Parented to the nameplate and levelled off our own health bar, so it
+    -- outranks the cast bar container it replaces on screen. Never levelled off
+    -- unitFrame.castBar — that field is nil in 12.1.
     local frame = CreateFrame("Frame", nil, plate)
     frame:SetPoint("TOPLEFT", customHB, "BOTTOMLEFT", 0, -2)
     frame:SetSize(barWidth, barHeight)
-    frame:SetFrameLevel((castBar and castBar:GetFrameLevel() or 5) + 4)
+    frame:SetFrameLevel(customHB:GetFrameLevel() + 4)
     frame:Hide()
 
     -- Status bar (always full, dark red)
@@ -838,194 +841,287 @@ local function ScheduleAuraSweep(unitFrame)
 end
 
 ----------------------------------------------------------------------------
--- Blizzard cast bar reskin (12.1)
+-- Nameplate cast bar (12.1) — addon-owned, Plater's model
 --
--- Same cure as the aura buttons above. We used to neutralize Blizzard's
--- nameplate cast bar (UnregisterAllEvents + reparent to a hidden frame) and
--- paint our own from UnitCastingInfo / UnitChannelInfo. In 12.1 those reads are
--- secret on hostile units (SecretWhenUnitSpellCastRestricted), so the rebuilt
--- bar came up bare on exactly the units that matter — and the reparent is a
--- taint risk in its own right now. Blizzard draws its bar correctly in its
--- trusted context, so we restyle that in place and show what Blizzard shows.
+-- a381a6b reskinned Blizzard's nameplate cast bar in place. That rested on a
+-- wrong diagnosis: an in-game probe confirmed unitFrame.castBar is nil in 12.1
+-- — Blizzard does not reliably build a nameplate cast bar at all. Plater does
+-- not reskin one either; it builds its own and colours it through the
+-- secret-safe APIs. Same model here.
 --
--- Accepted loss: our icon-left / name-centered layout. Blizzard owns the cast
--- bar's geometry — we touch fill texture, chrome alpha, icon crop and interrupt
--- color only. No SetSize/SetWidth, no SetFont (Blizzard reads its cast bar
--- FontStrings during secure execution), no reparenting. Every write is
--- pcall-guarded; a refusal leaves an unstyled Blizzard bar, not a Lua error.
+-- Nothing below may depend on unitFrame.castBar — not for the build, not for
+-- anchoring, not for frame level. Our bar hangs off our own health bar. (The
+-- old `if not castBar then return end` gate is exactly what killed the feature
+-- once Blizzard nil'd the field.)
+--
+-- The secret-safe rules, all of them Plater's:
+--   * never derive a CanInterrupt boolean. `notInterruptible` is passed
+--     straight into C_CurveUtil.EvaluateColorValueFromBoolean and
+--     Texture:SetAlphaFromBoolean; it is never compared, negated or stored.
+--     (Plater sets CanInterrupt = nil outright under Midnight.)
+--   * never do arithmetic on cast timing. The fill is driven by a duration
+--     object, never by numbers.
+--   * guard every spell name / icon / spellID read with issecretvalue and
+--     degrade rather than erroring.
 ----------------------------------------------------------------------------
 
-local styledCastBars = {}    -- Blizzard castBar → true (one-time pass done)
-local castBarBackdrops = {}  -- Blizzard castBar → our backdrop Frame
+local CAST_INTERRUPTIBLE     = { 1, 0.7, 0 }      -- orange
+local CAST_NOT_INTERRUPTIBLE = { 0.7, 0.7, 0.7 }  -- grey
 
-local CAST_INTERRUPTIBLE     = { 1, 0.7, 0 }
-local CAST_NOT_INTERRUPTIBLE = { 0.7, 0.7, 0.7 }
+-- Same shield art Plater uses, desaturated
+local SHIELD_TEXTURE = [[Interface\GROUPFRAME\UI-GROUP-MAINTANKICON]]
 
--- Plain frame + texture, NOT BackdropTemplate: BackdropTemplate's
--- SetupTextureCoordinates calls GetWidth() in Lua, and a cast bar on a
--- restricted unit carries a secret width. Mirrors CreateAuraBackdrop.
-local function CreateCastBarBackdrop(castBar)
-    local bd = CreateFrame("Frame", nil, castBar)
-    bd:SetAllPoints(castBar)
-    local tex = bd:CreateTexture(nil, "BACKGROUND")
-    tex:SetAllPoints()
-    tex:SetColorTexture(C.BACKDROP_COLOR[1], C.BACKDROP_COLOR[2],
-                        C.BACKDROP_COLOR[3], C.BACKDROP_COLOR[4])
-    local level = castBar:GetFrameLevel()
-    if type(level) == "number" then
-        bd:SetFrameLevel(math.max(level - 1, 0))
-    end
-    bd:EnableMouse(false)
-    return bd
+local function CreateCastBar(unitFrame)
+    if customCastBars[unitFrame] then return end
+
+    local customHB = customHealthBars[unitFrame.healthBar]
+    if not customHB then return end
+
+    local plate = unitFrame:GetParent()
+    if not plate then return end
+
+    local barWidth  = ns.Config:Get("nameplates", "width")
+    local barHeight = ns.Config:Get("nameplates", "height")
+    local iconSize  = barHeight
+    local iconGap   = 2
+
+    -- Container parented to the nameplate and levelled off our own health bar
+    local container = CreateFrame("Frame", nil, plate)
+    container:SetPoint("TOPLEFT", customHB, "BOTTOMLEFT", 0, -2)
+    container:SetSize(barWidth, barHeight)
+    container:SetFrameLevel(customHB:GetFrameLevel() + 2)
+    container:Hide()
+
+    -- Our own StatusBar, addon-owned — no taint
+    local bar = CreateFrame("StatusBar", nil, container)
+    bar:SetStatusBarTexture(C.BAR_TEXTURE)
+    bar:SetPoint("TOPLEFT", container, "TOPLEFT", iconSize + iconGap, 0)
+    bar:SetSize(barWidth - iconSize - iconGap, barHeight)
+    bar:SetMinMaxValues(0, 1)
+    bar:SetValue(0)
+
+    -- Plain texture backdrop, never BackdropTemplate (secret width)
+    local bg = bar:CreateTexture(nil, "BACKGROUND")
+    bg:SetAllPoints()
+    bg:SetColorTexture(C.BACKDROP_COLOR[1], C.BACKDROP_COLOR[2],
+                       C.BACKDROP_COLOR[3], C.BACKDROP_COLOR[4])
+
+    -- Spell icon (square, left of bar)
+    local icon = bar:CreateTexture(nil, "ARTWORK")
+    icon:SetSize(iconSize, iconSize)
+    icon:SetPoint("TOPRIGHT", bar, "TOPLEFT", -iconGap, 0)
+    icon:SetTexCoord(unpack(C.ICON_CROP))
+
+    local iconBg = bar:CreateTexture(nil, "BACKGROUND")
+    iconBg:SetPoint("TOPLEFT", icon, "TOPLEFT")
+    iconBg:SetPoint("BOTTOMRIGHT", icon, "BOTTOMRIGHT")
+    iconBg:SetColorTexture(C.BACKDROP_COLOR[1], C.BACKDROP_COLOR[2],
+                           C.BACKDROP_COLOR[3], C.BACKDROP_COLOR[4])
+
+    -- Non-interruptible shield, toggled with SetAlphaFromBoolean — the API
+    -- takes the secret boolean directly, so nothing ever branches on it.
+    local shield = bar:CreateTexture(nil, "OVERLAY")
+    shield:SetTexture(SHIELD_TEXTURE)
+    shield:SetDesaturated(true)
+    shield:SetSize(iconSize * 0.8, iconSize)
+    shield:SetPoint("CENTER", icon, "CENTER")
+    shield:SetAlpha(0)
+
+    -- Spell name. Our own FontString on our own frame — safe to style; nothing
+    -- secure ever reads it.
+    local text = bar:CreateFontString(nil, "OVERLAY")
+    text:SetPoint("LEFT", bar, "LEFT", 4, 0)
+    text:SetPoint("RIGHT", bar, "RIGHT", -4, 0)
+    text:SetJustifyH("CENTER")
+    text:SetWordWrap(false)
+    StyleFontString(text)
+
+    customCastBars[unitFrame] = {
+        container = container, bar = bar, icon = icon,
+        iconBg = iconBg, shield = shield, text = text,
+    }
 end
 
--- Resolve Blizzard's nameplate cast bar. It is unitFrame.castBar: the old
--- neutralize path proved the identity — reparenting that exact object is what
--- kept Blizzard's bar off the screen for as long as this addon has existed. If
--- 12.1 ever wraps it in a container frame, take the container's only StatusBar
--- child; if neither shape matches, say so once and leave the bar alone.
-local function ResolveCastBar(unitFrame)
-    local castBar = SafeGet(unitFrame, "castBar")
-    if not castBar then return nil end
-
-    local objType = SafeObjectType(castBar)
-    if objType == "StatusBar" then return castBar end
-
-    local found
-    for _, child in ipairs(GetChildList(castBar)) do
-        if SafeObjectType(child) == "StatusBar" then
-            -- Ambiguous: better an unstyled cast bar than a mangled one
-            if found then return nil end
-            found = child
-        end
-    end
-    if not found then
-        ReportSkinRefusal("cast bar identity",
-            "unitFrame.castBar is <" .. tostring(objType) .. "> with no StatusBar child")
-    end
-    return found
+local function HideCastBar(unitFrame)
+    local custom = customCastBars[unitFrame]
+    if not custom then return end
+    custom.container:Hide()
 end
 
--- The icon lives on the bar itself in the flat shape, on its wrapper in the
--- container shape. Same finder the aura buttons use: named key first, then the
--- one region carrying a fileID rather than an atlas.
-local function FindCastIcon(castBar)
-    if not castBar then return nil end
-    local icon = FindIconTexture(castBar)
-    if icon then return icon end
-    -- Container shape: by name only. A heuristic scan of the wrapper would be
-    -- scanning the whole UnitFrame in the flat shape, which is not safe.
-    local okParent, parent = pcall(castBar.GetParent, castBar)
-    if okParent then
-        local named = SafeGet(parent, "Icon")
-        if SafeObjectType(named) == "Texture" then return named end
-    end
+local function SetBarColor(custom, r, g, b)
+    local tex = custom.bar:GetStatusBarTexture()
+    if not tex then return end
+    pcall(tex.SetVertexColor, tex, r, g, b)
+end
+
+-- Is the unit casting, channelling, or neither? `type(x) == "nil"` is the only
+-- nil-check permitted against a value that may be secret; a plain `== nil`
+-- would be a comparison and would throw.
+local function DetectCastKind(unit)
+    local okCast, castName = pcall(UnitCastingInfo, unit)
+    if okCast and type(castName) ~= "nil" then return false end
+    local okChan, chanName = pcall(UnitChannelInfo, unit)
+    if okChan and type(chanName) ~= "nil" then return true end
     return nil
 end
 
--- Last colour we applied per bar. Re-applied whenever Blizzard swaps the fill
--- texture out from under us (a new texture object comes back vertex-white).
-local castBarColors = {}
-
-local function SetCastBarColor(castBar, r, g, b)
-    local ok, tex = pcall(castBar.GetStatusBarTexture, castBar)
-    if not ok or not tex then return end
-    if TryWrite("cast bar color", tex.SetVertexColor, tex, r, g, b) then
-        castBarColors[castBar] = { r, g, b }
-    end
-end
-
-local function StyleCastBar(castBar)
-    if not castBar then return end
-
-    local icon = FindCastIcon(castBar)
-
-    -- Per-refresh: Blizzard resets the crop when it reuses the bar for the
-    -- next cast, so this runs on every pass.
-    if icon then
-        TryWrite("cast icon texcoord", icon.SetTexCoord, icon,
-                 C.ICON_CROP[1], C.ICON_CROP[2], C.ICON_CROP[3], C.ICON_CROP[4])
+-- A usable spellID is a non-secret one. UNIT_SPELLCAST_START hands one over
+-- directly; the RefreshNamePlate path (a cast already running when the plate
+-- appears) has to dig it out of the cast info, where it may be secret.
+local function ReadSpellID(unit, isChannel, spellID)
+    if spellID and not (issecretvalue and issecretvalue(spellID)) then
+        return spellID
     end
 
-    if styledCastBars[castBar] then return end
-    styledCastBars[castBar] = true
-
-    TryWrite("cast bar texture", castBar.SetStatusBarTexture, castBar, C.BAR_TEXTURE)
-    -- A flat white fill is colourless until something tints it, and Blizzard's
-    -- own atlas art is gone now — start from the interruptible colour so the bar
-    -- is never bare if the interrupt read is refused.
-    SetCastBarColor(castBar, CAST_INTERRUPTIBLE[1], CAST_INTERRUPTIBLE[2],
-                    CAST_INTERRUPTIBLE[3])
-
-    -- The fill texture and the spell icon stay; everything else (border, spark,
-    -- flash, shield, Blizzard's own background) goes flat. IsIconTexture is the
-    -- backstop: an icon we failed to identify by name is left alone rather than
-    -- alpha-zeroed off the bar.
-    local fill
-    local okFill, f = pcall(castBar.GetStatusBarTexture, castBar)
-    if okFill then fill = f end
-
-    for _, region in ipairs(GetRegionList(castBar)) do
-        local rt = SafeObjectType(region)
-        if rt == "MaskTexture" then
-            TryWrite("cast mask hide", region.Hide, region)
-        elseif rt == "Texture" and region ~= icon and region ~= fill
-            and not IsIconTexture(region) then
-            TryWrite("cast chrome alpha", region.SetAlpha, region, 0)
+    local ok, id = pcall(function()
+        if isChannel then
+            local _, _, _, _, _, _, _, s = UnitChannelInfo(unit)
+            return s
         end
-    end
-
-    -- Blizzard re-shows the non-interruptible shield per cast; alpha stays 0
-    -- across Show(), but re-assert it in case Blizzard sets alpha too. The
-    -- interruptible state is carried by the bar color instead.
-    local shield = SafeGet(castBar, "BorderShield")
-    if shield then
-        TryWrite("hook shield Show", hooksecurefunc, shield, "Show", function(self)
-            pcall(self.SetAlpha, self, 0)
-        end)
-    end
-
-    if not castBarBackdrops[castBar] then
-        local ok, bd = pcall(CreateCastBarBackdrop, castBar)
-        if ok then
-            castBarBackdrops[castBar] = bd
-        else
-            ReportSkinRefusal("cast backdrop", bd)
-        end
-    end
-
-    -- Blizzard swaps the icon and restores its crop when the bar is reused.
-    if icon then
-        TryWrite("hook cast icon SetTexture", hooksecurefunc, icon, "SetTexture", function(self)
-            pcall(self.SetTexCoord, self,
-                  C.ICON_CROP[1], C.ICON_CROP[2], C.ICON_CROP[3], C.ICON_CROP[4])
-        end)
-    end
-    -- Blizzard reasserts its own fill art on some casts; take it back. A flag,
-    -- not a texture-path comparison, ends the recursion — a path that doesn't
-    -- compare equal after a round trip would otherwise loop forever.
-    local reapplying = false
-    TryWrite("hook cast bar SetStatusBarTexture", hooksecurefunc, castBar,
-             "SetStatusBarTexture", function(self)
-        if reapplying then return end
-        reapplying = true
-        pcall(self.SetStatusBarTexture, self, C.BAR_TEXTURE)
-        reapplying = false
-        -- The swap hands back a fresh, untinted texture
-        local c = castBarColors[self]
-        if c then SetCastBarColor(self, c[1], c[2], c[3]) end
+        local _, _, _, _, _, _, _, _, s = UnitCastingInfo(unit)
+        return s
     end)
+    if not ok or type(id) == "nil" then return nil end
+    if issecretvalue and issecretvalue(id) then return nil end
+    return id
 end
 
--- Interrupt coloring. `notInterruptible` is secret on a restricted unit, so it
--- never gets compared — EvaluateColorValueFromBoolean is the sanctioned escape
--- hatch that turns a (possibly secret) boolean into a colour channel. If the
--- read itself is refused we leave Blizzard's own colour alone.
-local function ApplyInterruptColor(unitFrame, isChannel)
-    local castBar = ResolveCastBar(unitFrame)
-    local unit = SafeGet(unitFrame, "unit")
-    if not castBar or not unit then return end
+-- Spell name and icon. A non-secret spellID gives a clean name/icon through
+-- C_Spell.GetSpellInfo; the UnitCastingInfo fallback can hand back secret ones.
+-- Nothing here branches on a value's contents — only on whether it exists.
+local function ReadSpellDisplay(unit, isChannel, spellID)
+    local name, icon
 
+    if spellID then
+        local ok, info = pcall(C_Spell.GetSpellInfo, spellID)
+        if ok and info then
+            name = info.name
+            icon = info.iconID
+        end
+    end
+
+    if type(name) == "nil" or type(icon) == "nil" then
+        local ok, n, t = pcall(function()
+            if isChannel then
+                local a, _, c = UnitChannelInfo(unit)
+                return a, c
+            end
+            local a, _, c = UnitCastingInfo(unit)
+            return a, c
+        end)
+        if ok then
+            if type(name) == "nil" then name = n end
+            if type(icon) == "nil" then icon = t end
+        end
+    end
+
+    return name, icon
+end
+
+-- Progress fill under secret timing.
+--
+-- Cast start/end times are secret on a restricted unit, so the bar is never
+-- driven by numbers — it gets a duration object, the sanctioned escape hatch
+-- (C_DurationUtil.CreateDuration + StatusBar:SetTimerDuration). Two routes,
+-- best first:
+--
+--   1. UnitCastingDuration / UnitChannelDuration hand back a duration object
+--      directly, so nothing numeric is read at all. Preferred when present.
+--   2. Plater's route (Details framework unitframe_midnight.lua): build one
+--      with CreateDuration():SetTimeFromEnd(endTime, length, rate). endTime
+--      comes straight out of UnitCastingInfo and may be secret — it is passed
+--      through, never inspected. The length is the spell's own castTime read
+--      off a non-secret spellID, so nothing is computed from a secret. Both
+--      are milliseconds, which is the unit UnitCastingInfo reports in.
+--
+-- Neither is verified against a live 12.1 client. Both are pcall-guarded and
+-- the caller degrades to a static bar if they fail.
+local function BuildCastDuration(unit, isChannel, spellID)
+    local direct
+    if isChannel then
+        direct = UnitChannelDuration
+    else
+        direct = UnitCastingDuration
+    end
+    if type(direct) == "function" then
+        local ok, duration = pcall(direct, unit)
+        if ok and duration then return duration end
+    end
+
+    if type(C_DurationUtil) ~= "table"
+        or type(C_DurationUtil.CreateDuration) ~= "function" then
+        return nil
+    end
+
+    -- The spellID is non-secret by construction, so its castTime is too and
+    -- this comparison is safe.
+    local length
+    if spellID then
+        local ok, info = pcall(C_Spell.GetSpellInfo, spellID)
+        if ok and info then length = info.castTime end
+    end
+    if type(length) ~= "number" or length <= 0 then return nil end
+
+    local okEnd, endTime = pcall(function()
+        if isChannel then
+            local _, _, _, _, e = UnitChannelInfo(unit)
+            return e
+        end
+        local _, _, _, _, e = UnitCastingInfo(unit)
+        return e
+    end)
+    if not okEnd or type(endTime) == "nil" then return nil end
+
+    local okBuild, duration = pcall(function()
+        local d = C_DurationUtil.CreateDuration()
+        d:SetTimeFromEnd(endTime, length, 1)
+        return d
+    end)
+    if not okBuild then
+        ReportSkinRefusal("cast duration build", duration)
+        return nil
+    end
+    return duration
+end
+
+-- Degrade path: stop any running timer and park the bar full, so the player
+-- still sees that a cast is up even when we can't animate it.
+local function StaticCastFill(bar)
+    pcall(bar.SetTimerDuration, bar, nil)
+    bar:SetMinMaxValues(0, 1)
+    bar:SetValue(1)
+end
+
+local function DriveCastFill(custom, unit, isChannel, spellID)
+    local bar = custom.bar
+
+    local duration = BuildCastDuration(unit, isChannel, spellID)
+    if not duration then
+        StaticCastFill(bar)
+        return false
+    end
+
+    local timerDir = Enum.StatusBarTimerDirection
+    local direction
+    if timerDir then
+        direction = isChannel and timerDir.RemainingTime or timerDir.ElapsedTime
+    end
+    local interp = Enum.StatusBarInterpolation
+                   and Enum.StatusBarInterpolation.Immediate or nil
+
+    local ok, err = pcall(bar.SetTimerDuration, bar, duration, interp, direction)
+    if not ok then
+        ReportSkinRefusal("cast timer duration", err)
+        StaticCastFill(bar)
+        return false
+    end
+    return true
+end
+
+-- notInterruptible is secret on a restricted unit. It is never compared,
+-- negated or turned into a CanInterrupt boolean — it goes straight into the
+-- two APIs built to consume a secret boolean.
+local function ApplyCastInterruptState(custom, unit, isChannel)
     local ok, notInterruptible = pcall(function()
         if isChannel then
             local _, _, _, _, _, _, ni = UnitChannelInfo(unit)
@@ -1034,26 +1130,91 @@ local function ApplyInterruptColor(unitFrame, isChannel)
         local _, _, _, _, _, _, _, ni = UnitCastingInfo(unit)
         return ni
     end)
-    -- `type(x) == "nil"` is the only nil-check permitted against a secret; a
-    -- plain `== nil` would be a comparison and would throw.
-    if not ok or type(notInterruptible) == "nil" then return end
 
-    local okColor, r, b = pcall(function()
-        return C_CurveUtil.EvaluateColorValueFromBoolean(notInterruptible,
-                   CAST_NOT_INTERRUPTIBLE[1], CAST_INTERRUPTIBLE[1]),
-               C_CurveUtil.EvaluateColorValueFromBoolean(notInterruptible,
-                   CAST_NOT_INTERRUPTIBLE[3], CAST_INTERRUPTIBLE[3])
-    end)
-    if not okColor then
-        ReportSkinRefusal("cast interrupt curve", r)
+    if not ok or type(notInterruptible) == "nil" then
+        -- Unknown: interruptible colour, no shield. The
+        -- UNIT_SPELLCAST_(NOT_)INTERRUPTIBLE events correct it if it changes.
+        SetBarColor(custom, CAST_INTERRUPTIBLE[1], CAST_INTERRUPTIBLE[2],
+                    CAST_INTERRUPTIBLE[3])
+        pcall(custom.shield.SetAlpha, custom.shield, 0)
         return
     end
 
-    SetCastBarColor(castBar, r, CAST_INTERRUPTIBLE[2], b)
+    -- One curve evaluation per channel — Plater's SplitEvaluateColor shape
+    local okColor, r, g, b = pcall(function()
+        local eval = C_CurveUtil.EvaluateColorValueFromBoolean
+        return eval(notInterruptible, CAST_NOT_INTERRUPTIBLE[1], CAST_INTERRUPTIBLE[1]),
+               eval(notInterruptible, CAST_NOT_INTERRUPTIBLE[2], CAST_INTERRUPTIBLE[2]),
+               eval(notInterruptible, CAST_NOT_INTERRUPTIBLE[3], CAST_INTERRUPTIBLE[3])
+    end)
+    if okColor then
+        SetBarColor(custom, r, g, b)
+    else
+        ReportSkinRefusal("cast interrupt curve", r)
+        SetBarColor(custom, CAST_INTERRUPTIBLE[1], CAST_INTERRUPTIBLE[2],
+                    CAST_INTERRUPTIBLE[3])
+    end
+
+    local okShield, err = pcall(custom.shield.SetAlphaFromBoolean, custom.shield,
+                                notInterruptible, 1, 0)
+    if not okShield then
+        ReportSkinRefusal("cast shield alpha", err)
+        pcall(custom.shield.SetAlpha, custom.shield, 0)
+    end
 end
 
-local function SkinCastBar(unitFrame)
-    StyleCastBar(ResolveCastBar(unitFrame))
+-- Explicit interrupt state from the event name (non-secret) — no API query
+local function SetCastInterruptible(unitFrame, interruptible)
+    local custom = customCastBars[unitFrame]
+    if not custom then return end
+    local color = interruptible and CAST_INTERRUPTIBLE or CAST_NOT_INTERRUPTIBLE
+    SetBarColor(custom, color[1], color[2], color[3])
+    pcall(custom.shield.SetAlpha, custom.shield, interruptible and 0 or 1)
+end
+
+-- isChannelKnown: true / false from the event, or nil to auto-detect
+local function ShowCastBar(unitFrame, spellID, isChannelKnown)
+    local custom = customCastBars[unitFrame]
+    if not custom then return end
+    local unit = unitFrame.unit
+    if not unit then return end
+
+    local isChannel = isChannelKnown
+    if type(isChannel) ~= "boolean" then
+        isChannel = DetectCastKind(unit)
+        if isChannel == nil then
+            HideCastBar(unitFrame)
+            return
+        end
+    end
+
+    -- Resolve once, non-secret or nil, and use it for both display and timing
+    local usableSpellID = ReadSpellID(unit, isChannel, spellID)
+
+    local spellName, spellIcon = ReadSpellDisplay(unit, isChannel, usableSpellID)
+
+    -- SetTexture takes a secret number, but a secret fileID renders as a white
+    -- box (see 9091bb1) — swap in the neutral placeholder instead. Keeping the
+    -- icon non-secret also keeps the kick overlay's GetTexture read clean.
+    local iconValue = spellIcon
+    if type(iconValue) == "nil" or (issecretvalue and issecretvalue(iconValue)) then
+        iconValue = QUESTION_MARK
+    end
+    pcall(custom.icon.SetTexture, custom.icon, iconValue)
+
+    -- SetText accepts a secret string: it marks the Text aspect secret on our
+    -- own FontString, which is fine and is what the name overlay already does.
+    -- Only the nil case needs a literal.
+    if type(spellName) == "nil" then
+        pcall(custom.text.SetText, custom.text, "")
+    elseif not pcall(custom.text.SetText, custom.text, spellName) then
+        pcall(custom.text.SetText, custom.text, "")
+    end
+
+    DriveCastFill(custom, unit, isChannel, usableSpellID)
+    ApplyCastInterruptState(custom, unit, isChannel)
+
+    custom.container:Show()
 end
 
 local function UpdateAbsorbs(unitFrame)
@@ -1102,7 +1263,7 @@ local function SkinNamePlate(unitFrame)
     skinnedFrames[unitFrame] = true
 
     SkinHealthBar(unitFrame)
-    SkinCastBar(unitFrame)
+    CreateCastBar(unitFrame)
     CleanupChrome(unitFrame)
     StyleAllText(unitFrame)
     CreateFocusOverlay(unitFrame)
@@ -1125,9 +1286,12 @@ local function RefreshNamePlate(unitFrame)
     end
     UpdateAbsorbs(unitFrame)
     UpdateThreatColor(unitFrame)
-    -- Blizzard drives the cast bar's fill, name and timing now; we only make
-    -- sure our styling is still on it after a plate is recycled.
-    SkinCastBar(unitFrame)
+    -- Build the bar if this plate is new, then pick up a cast already in
+    -- progress (auto-detects cast vs channel, hides if neither).
+    CreateCastBar(unitFrame)
+    if unitFrame.unit then
+        ShowCastBar(unitFrame)
+    end
     -- Keep Blizzard's name hidden, sync text to our overlay
     if unitFrame.name then
         unitFrame.name:SetAlpha(0)
@@ -1152,8 +1316,22 @@ function NameplateSkin:ResizeAll()
             absorbBar:SetPoint("LEFT", customHB:GetStatusBarTexture(), "RIGHT")
         end
     end
-    -- Resize kick overlays to match
+    -- Resize cast bars to match
     local iconGap = 2
+    for unitFrame, custom in pairs(customCastBars) do
+        local customHB = customHealthBars[unitFrame.healthBar]
+        if customHB then
+            custom.container:ClearAllPoints()
+            custom.container:SetPoint("TOPLEFT", customHB, "BOTTOMLEFT", 0, -2)
+        end
+        custom.container:SetSize(w, h)
+        custom.bar:ClearAllPoints()
+        custom.bar:SetPoint("TOPLEFT", custom.container, "TOPLEFT", h + iconGap, 0)
+        custom.bar:SetSize(w - h - iconGap, h)
+        custom.icon:SetSize(h, h)
+        custom.shield:SetSize(h * 0.8, h)
+    end
+    -- Resize kick overlays to match
     for _, overlay in pairs(kickOverlays) do
         overlay.bar:ClearAllPoints()
         overlay.bar:SetPoint("TOPLEFT", overlay.frame, "TOPLEFT", h + iconGap, 0)
@@ -1161,8 +1339,7 @@ function NameplateSkin:ResizeAll()
         overlay.icon:SetSize(h, h)
         overlay.frame:SetSize(w, h)
     end
-    -- Aura icons and the cast bar are Blizzard's own frames now; Blizzard owns
-    -- their layout.
+    -- Aura icons are Blizzard's own buttons now; Blizzard owns their layout.
 end
 
 function NameplateSkin:Apply()
@@ -1184,10 +1361,13 @@ function NameplateSkin:Apply()
     eventFrame:RegisterEvent("UNIT_SPELLCAST_INTERRUPTIBLE")
     eventFrame:RegisterEvent("UNIT_SPELLCAST_NOT_INTERRUPTIBLE")
     eventFrame:RegisterEvent("UNIT_SPELLCAST_INTERRUPTED")
+    eventFrame:RegisterEvent("UNIT_SPELLCAST_STOP")
+    eventFrame:RegisterEvent("UNIT_SPELLCAST_CHANNEL_STOP")
     eventFrame:RegisterEvent("UNIT_AURA")  -- re-style trigger only, no aura reads
     eventFrame:RegisterEvent("UNIT_HEALTH")
     eventFrame:RegisterEvent("UNIT_MAXHEALTH")
     eventFrame:RegisterEvent("UNIT_ABSORB_AMOUNT_CHANGED")
+    eventFrame:RegisterEvent("NAME_PLATE_UNIT_REMOVED")
     eventFrame:SetScript("OnEvent", function(self, event, ...)
         if event == "NAME_PLATE_CREATED" then
             local plate = ...
@@ -1237,16 +1417,20 @@ function NameplateSkin:Apply()
             RefreshAllHoverBorders()
         elseif event == "UNIT_SPELLCAST_START"
             or event == "UNIT_SPELLCAST_CHANNEL_START" then
-            -- Not a data read for display: Blizzard fills its own bar. We only
-            -- re-assert styling (a recycled bar comes back with Blizzard's crop
-            -- and chrome restored) and set the interrupt color.
+            local unitId, _, spellID = ...
+            if not IsNamePlateUnit(unitId) then return end
+            local plate = C_NamePlate.GetNamePlateForUnit(unitId)
+            if plate and plate.UnitFrame and skinnedFrames[plate.UnitFrame] then
+                ShowCastBar(plate.UnitFrame, spellID,
+                    event == "UNIT_SPELLCAST_CHANNEL_START")
+            end
+        elseif event == "UNIT_SPELLCAST_STOP"
+            or event == "UNIT_SPELLCAST_CHANNEL_STOP" then
             local unitId = ...
             if not IsNamePlateUnit(unitId) then return end
             local plate = C_NamePlate.GetNamePlateForUnit(unitId)
             if plate and plate.UnitFrame and skinnedFrames[plate.UnitFrame] then
-                SkinCastBar(plate.UnitFrame)
-                ApplyInterruptColor(plate.UnitFrame,
-                    event == "UNIT_SPELLCAST_CHANNEL_START")
+                HideCastBar(plate.UnitFrame)
             end
         elseif event == "UNIT_SPELLCAST_INTERRUPTIBLE"
             or event == "UNIT_SPELLCAST_NOT_INTERRUPTIBLE" then
@@ -1255,12 +1439,8 @@ function NameplateSkin:Apply()
             if not IsNamePlateUnit(unitId) then return end
             local plate = C_NamePlate.GetNamePlateForUnit(unitId)
             if plate and plate.UnitFrame and skinnedFrames[plate.UnitFrame] then
-                local castBar = ResolveCastBar(plate.UnitFrame)
-                if castBar then
-                    local color = (event == "UNIT_SPELLCAST_NOT_INTERRUPTIBLE")
-                        and CAST_NOT_INTERRUPTIBLE or CAST_INTERRUPTIBLE
-                    SetCastBarColor(castBar, color[1], color[2], color[3])
-                end
+                SetCastInterruptible(plate.UnitFrame,
+                    event == "UNIT_SPELLCAST_INTERRUPTIBLE")
             end
         elseif event == "UNIT_SPELLCAST_INTERRUPTED" then
             local unitId, _, _, interrupterGUID = ...
@@ -1270,14 +1450,12 @@ function NameplateSkin:Apply()
                 and interrupterGUID then
                 local name = UnitNameFromGUID(interrupterGUID)
                 if name then
-                    -- Borrow the icon off Blizzard's cast bar. On a restricted
-                    -- unit that fileID is secret, and SetTexture(secret) renders
-                    -- a white box on our own texture — fall back to a neutral
-                    -- placeholder rather than show one.
-                    local icon = FindCastIcon(ResolveCastBar(plate.UnitFrame))
+                    -- Our own icon, already forced non-secret on cast start,
+                    -- so this read back is clean.
+                    local custom = customCastBars[plate.UnitFrame]
                     local texture
-                    if icon then
-                        local ok, t = pcall(icon.GetTexture, icon)
+                    if custom then
+                        local ok, t = pcall(custom.icon.GetTexture, custom.icon)
                         if ok then texture = t end
                     end
                     if issecretvalue and issecretvalue(texture) then
@@ -1285,6 +1463,7 @@ function NameplateSkin:Apply()
                     end
                     ShowKickOverlay(plate.UnitFrame, name, texture)
                 end
+                HideCastBar(plate.UnitFrame)
             end
         elseif event == "UNIT_AURA" then
             -- Not an aura read: this is our re-style trigger. Blizzard adds or
@@ -1303,6 +1482,14 @@ function NameplateSkin:Apply()
             local plate = C_NamePlate.GetNamePlateForUnit(unitId)
             if plate and plate.UnitFrame and skinnedFrames[plate.UnitFrame] then
                 UpdateAbsorbs(plate.UnitFrame)
+            end
+        elseif event == "NAME_PLATE_UNIT_REMOVED" then
+            -- Nameplates are pooled: clear the cast bar so a recycled plate
+            -- can't come back showing the previous unit's cast.
+            local unitId = ...
+            local plate = C_NamePlate.GetNamePlateForUnit(unitId)
+            if plate and plate.UnitFrame then
+                HideCastBar(plate.UnitFrame)
             end
         end
     end)

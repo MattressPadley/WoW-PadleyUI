@@ -334,11 +334,45 @@ local function BuildReport()
 end
 
 -- ---------------------------------------------------------------------------
--- Cast bar identity probe (/puiprobe cast)
+-- Cast bar probe (/puiprobe cast)
 --
--- Answers the nameplate-castbar-reskin open question: which object is
--- Blizzard's nameplate cast bar, and what does it own? Still READ-ONLY.
+-- Two questions. (1) Does Blizzard build a nameplate cast bar at all? The
+-- answer so far is no — unitFrame.castBar is nil in 12.1, which is why we build
+-- our own. (2) Which of the duration-object APIs our own bar's progress fill
+-- depends on actually exist on this client. Still READ-ONLY.
 -- ---------------------------------------------------------------------------
+
+local DURATION_APIS = {
+    "UnitCastingDuration", "UnitChannelDuration", "UnitCastingInfo",
+    "UnitChannelInfo", "C_DurationUtil", "C_CurveUtil",
+}
+
+local function ReportCastAPIs()
+    Emit("== CAST API SURFACE ==")
+    for _, name in ipairs(DURATION_APIS) do
+        Emit("  " .. name .. ": " .. type(_G[name]))
+    end
+    if type(C_DurationUtil) == "table" then
+        Emit("  C_DurationUtil.CreateDuration: " .. type(C_DurationUtil.CreateDuration))
+        local ok, d = pcall(C_DurationUtil.CreateDuration)
+        if ok and d then
+            Emit("  duration obj SetTimeFromEnd: " .. type(SafeGet(d, "SetTimeFromEnd")) ..
+                 "  SetTimeFromStart: " .. type(SafeGet(d, "SetTimeFromStart")))
+        end
+    end
+    if type(C_CurveUtil) == "table" then
+        Emit("  C_CurveUtil.EvaluateColorValueFromBoolean: " ..
+             type(C_CurveUtil.EvaluateColorValueFromBoolean))
+    end
+    local probeBar = CreateFrame("StatusBar")
+    Emit("  StatusBar:SetTimerDuration: " .. type(SafeGet(probeBar, "SetTimerDuration")))
+    Emit("  Texture:SetAlphaFromBoolean: " ..
+         type(SafeGet(probeBar:CreateTexture(), "SetAlphaFromBoolean")))
+    Emit("  Enum.StatusBarTimerDirection: " ..
+         type(Enum and Enum.StatusBarTimerDirection) ..
+         "  Enum.StatusBarInterpolation: " ..
+         type(Enum and Enum.StatusBarInterpolation))
+end
 
 local function DescribeCastRegions(node, indent)
     local ok, a, b, c, d, e, f, g, h, i, j, k, l = pcall(node.GetRegions, node)
@@ -366,6 +400,8 @@ local function BuildCastReport()
     Emit("restrictions active: " .. tostring(
         C_Secrets and C_Secrets.HasSecretRestrictions and C_Secrets.HasSecretRestrictions() or "n/a"))
 
+    ReportCastAPIs()
+
     local base = C_NamePlate and C_NamePlate.GetNamePlateForUnit
         and C_NamePlate.GetNamePlateForUnit("target")
     if not base and C_NamePlate and C_NamePlate.GetNamePlates then
@@ -388,7 +424,8 @@ local function BuildCastReport()
 
     local cb = SafeGet(uf, "castBar")
     if not IsWidget(cb) then
-        Emit(".castBar -> " .. tostring(cb) .. "  <-- NOT a widget; reskin will report this")
+        Emit(".castBar -> " .. tostring(cb) ..
+             "  <-- no Blizzard cast bar; expected in 12.1, we build our own")
     else
         Emit(".castBar <" .. (SafeCall(cb, "GetObjectType") or "?") .. "> " ..
              (SafeCall(cb, "GetName") or "?"))
