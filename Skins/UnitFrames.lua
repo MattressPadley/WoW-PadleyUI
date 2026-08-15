@@ -1112,13 +1112,19 @@ function UnitFrameSkin:Apply()
     end)
 
     -- Hook UpdateAuras on instances — fires after Blizzard finishes creating/updating
-    -- aura pool frames, so we skin every active aura button each refresh
-    hooksecurefunc(TargetFrame, "UpdateAuras", function(self)
-        SkinFrameAuras(self)
-    end)
-    hooksecurefunc(FocusFrame, "UpdateAuras", function(self)
-        SkinFrameAuras(self)
-    end)
+    -- aura pool frames, so we skin every active aura button each refresh.
+    -- Guarded: nameplates already lost their addon-side aura path in 12.1, so a
+    -- future removal here must not fail the whole unit frame skin at load.
+    if TargetFrame and type(TargetFrame.UpdateAuras) == "function" then
+        hooksecurefunc(TargetFrame, "UpdateAuras", function(self)
+            SkinFrameAuras(self)
+        end)
+    end
+    if FocusFrame and type(FocusFrame.UpdateAuras) == "function" then
+        hooksecurefunc(FocusFrame, "UpdateAuras", function(self)
+            SkinFrameAuras(self)
+        end)
+    end
 
     local eventFrame = CreateFrame("Frame")
     eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")

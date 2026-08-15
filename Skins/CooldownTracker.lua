@@ -181,12 +181,16 @@ local function SkinCooldownBar(item)
         end
         statusBar:SetStatusBarTexture(C.BAR_TEXTURE)
 
-        -- Backdrop sized to the status bar
-        local bdFrame = CreateFrame("Frame", nil, item, "BackdropTemplate")
+        -- Backdrop sized to the status bar. Plain frame + texture, NOT
+        -- BackdropTemplate: its SetupTextureCoordinates calls GetWidth() in Lua,
+        -- and a viewer item can carry a secret width. Mirrors UnitFrames/SkinEngine.
+        local bdFrame = CreateFrame("Frame", nil, item)
         bdFrame:SetAllPoints(statusBar)
         bdFrame:SetFrameLevel(math.max(statusBar:GetFrameLevel() - 1, 0))
-        bdFrame:SetBackdrop({ bgFile = C.FLAT_BACKDROP.bgFile })
-        bdFrame:SetBackdropColor(C.BACKDROP_COLOR[1], C.BACKDROP_COLOR[2], C.BACKDROP_COLOR[3], C.BACKDROP_COLOR[4])
+        local bdTex = bdFrame:CreateTexture(nil, "BACKGROUND")
+        bdTex:SetAllPoints()
+        bdTex:SetColorTexture(C.BACKDROP_COLOR[1], C.BACKDROP_COLOR[2],
+                              C.BACKDROP_COLOR[3], C.BACKDROP_COLOR[4])
         bdFrame:EnableMouse(false)
     end
 end
