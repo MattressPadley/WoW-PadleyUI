@@ -83,6 +83,28 @@ local function KillRegion(region)
     end
 end
 
+-- Permanently hide a Blizzard frame (and everything parented to it).
+-- Deliberately NOT :Hide() — Blizzard shows/hides cast bars from secure code on
+-- every cast, and hiding out from under that path taints it under 12.1. Alpha-0
+-- plus re-hide hooks on Show/SetAlpha leaves the frame's own state alone.
+local function HideFramePersistently(frame)
+    if not frame or hookedRegions[frame] then return end
+    hookedRegions[frame] = true
+    frame:SetAlpha(0)
+    hooksecurefunc(frame, "SetAlpha", function(self, a)
+        if a ~= 0 then self:SetAlpha(0) end
+    end)
+    hooksecurefunc(frame, "Show", function(self)
+        self:SetAlpha(0)
+    end)
+end
+
+-- Target cast bar: not wanted at all. Focus keeps its cast bar; swap
+-- FocusFrame.spellbar / FocusFrameSpellBar in here if that changes.
+local function HideTargetCastBar()
+    HideFramePersistently((TargetFrame and TargetFrame.spellbar) or _G.TargetFrameSpellBar)
+end
+
 ---------------------------------------------------------------------------
 -- Name / Level helpers
 ---------------------------------------------------------------------------
@@ -655,6 +677,9 @@ local function SkinTargetFrame()
         KillRegion(frame.Selection)
     end
 
+    -- Hide the target cast bar outright
+    HideTargetCastBar()
+
     -- Strip ALL textures from content hierarchy (catches name background, etc.)
     StripAllTextures(content)
     StripAllTextures(contentMain)
@@ -1133,6 +1158,8 @@ function UnitFrameSkin:Apply()
     eventFrame:RegisterEvent("UNIT_DISPLAYPOWER")
     eventFrame:SetScript("OnEvent", function(self, event, arg1)
         if event == "PLAYER_ENTERING_WORLD" then
+            -- Idempotent; covers the case where spellbar wasn't resolvable at Apply time
+            HideTargetCastBar()
             UnitFrameSkin:ResizeAllBars()
             RefreshNameColor(PlayerFrame and PlayerFrame.name, "player")
         elseif event == "PLAYER_TARGET_CHANGED" then
