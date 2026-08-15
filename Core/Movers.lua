@@ -32,6 +32,11 @@ local panels = {
         addon = "Blizzard_Collections",
     },
     {
+        id = "EncounterJournal",
+        global = "EncounterJournal",
+        addon = "Blizzard_EncounterJournal",
+    },
+    {
         id = "ProfessionsFrame",
         global = "ProfessionsFrame",
         addon = "Blizzard_Professions",
