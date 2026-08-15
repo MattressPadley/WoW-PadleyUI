@@ -111,6 +111,29 @@ function SkinEngine:StyleFont(fontString, size, flags)
     fontString:SetFont(C.FONT, size or C.FONT_SIZE, flags or C.FONT_FLAGS)
 end
 
+--- Create a flat fill frame as a child of `parent`.
+--- Plain frame + SetColorTexture, NOT BackdropTemplate: SetBackdrop routes
+--- through Backdrop.lua's SetupTextureCoordinates, which does GetWidth()
+--- arithmetic. In 12.1 Blizzard frames can carry a secret width, and that
+--- arithmetic then errors ("attempt to perform arithmetic on local width (a
+--- secret number value...)") the moment our tainted execution touches it.
+--- A SetAllPoints texture anchors at the C level with no Lua width math.
+--- WHITE8x8 tinted via SetBackdropColor is pixel-identical to a colour texture,
+--- so the appearance is unchanged.
+--- @param parent table The frame to parent the fill to
+--- @param color table {r, g, b, a}
+--- @return table frame, table texture
+local function CreateFlatFill(parent, color)
+    local frame = CreateFrame("Frame", nil, parent)
+    frame:SetFrameLevel(parent:GetFrameLevel())
+
+    local tex = frame:CreateTexture(nil, "BACKGROUND")
+    tex:SetAllPoints()
+    tex:SetColorTexture(color[1], color[2], color[3], color[4])
+
+    return frame, tex
+end
+
 -- Track skinned frames externally (avoids writing keys to Blizzard frames)
 local skinnedButtons = {}
 local skinnedCloseButtons = {}
@@ -142,21 +165,16 @@ function SkinEngine:SkinDropdownButton(button, opts)
     if button.SetDisabledTexture then button:SetDisabledTexture("") end
 
     -- B) Separate child frame for backdrop (avoids Mixin(blizzardFrame, BackdropTemplateMixin))
-    local bdFrame = CreateFrame("Frame", nil, button, "BackdropTemplate")
-    bdFrame:SetAllPoints()
-    bdFrame:SetFrameLevel(button:GetFrameLevel())
-    bdFrame:SetBackdrop({
-        bgFile   = C.FLAT_BACKDROP.bgFile,
-    })
     local bg = opts.bgColor or C.HEADER_COLOR
-    bdFrame:SetBackdropColor(bg[1], bg[2], bg[3], bg[4])
+    local bdFrame, bdTex = CreateFlatFill(button, bg)
+    bdFrame:SetAllPoints()
 
     -- C) Hook OnEnter/OnLeave for hover bg highlight
     button:HookScript("OnEnter", function()
-        bdFrame:SetBackdropColor(C.HIGHLIGHT_COLOR[1], C.HIGHLIGHT_COLOR[2], C.HIGHLIGHT_COLOR[3], C.HIGHLIGHT_COLOR[4])
+        bdTex:SetColorTexture(C.HIGHLIGHT_COLOR[1], C.HIGHLIGHT_COLOR[2], C.HIGHLIGHT_COLOR[3], C.HIGHLIGHT_COLOR[4])
     end)
     button:HookScript("OnLeave", function()
-        bdFrame:SetBackdropColor(bg[1], bg[2], bg[3], bg[4])
+        bdTex:SetColorTexture(bg[1], bg[2], bg[3], bg[4])
     end)
 
     -- D) Style any text on the button
@@ -179,14 +197,9 @@ function SkinEngine:SkinCloseButton(button)
     if button.SetPushedTexture then button:SetPushedTexture("") end
     if button.SetDisabledTexture then button:SetDisabledTexture("") end
 
-    local bdFrame = CreateFrame("Frame", nil, button, "BackdropTemplate")
+    local bdFrame, bdTex = CreateFlatFill(button, C.HEADER_COLOR)
     bdFrame:SetPoint("TOPLEFT", 1, -1)
     bdFrame:SetPoint("BOTTOMRIGHT", -1, 1)
-    bdFrame:SetFrameLevel(button:GetFrameLevel())
-    bdFrame:SetBackdrop({
-        bgFile   = C.FLAT_BACKDROP.bgFile,
-    })
-    bdFrame:SetBackdropColor(C.HEADER_COLOR[1], C.HEADER_COLOR[2], C.HEADER_COLOR[3], C.HEADER_COLOR[4])
 
     local xText = bdFrame:CreateFontString(nil, "OVERLAY")
     xText:SetFont(C.FONT, C.FONT_SIZE_SMALL, C.FONT_FLAGS)
@@ -194,10 +207,10 @@ function SkinEngine:SkinCloseButton(button)
     xText:SetText("x")
 
     button:HookScript("OnEnter", function()
-        bdFrame:SetBackdropColor(C.HIGHLIGHT_COLOR[1], C.HIGHLIGHT_COLOR[2], C.HIGHLIGHT_COLOR[3], C.HIGHLIGHT_COLOR[4])
+        bdTex:SetColorTexture(C.HIGHLIGHT_COLOR[1], C.HIGHLIGHT_COLOR[2], C.HIGHLIGHT_COLOR[3], C.HIGHLIGHT_COLOR[4])
     end)
     button:HookScript("OnLeave", function()
-        bdFrame:SetBackdropColor(C.HEADER_COLOR[1], C.HEADER_COLOR[2], C.HEADER_COLOR[3], C.HEADER_COLOR[4])
+        bdTex:SetColorTexture(C.HEADER_COLOR[1], C.HEADER_COLOR[2], C.HEADER_COLOR[3], C.HEADER_COLOR[4])
     end)
 
     return bdFrame
@@ -215,13 +228,8 @@ function SkinEngine:SkinTab(tab)
     if tab.SetPushedTexture then tab:SetPushedTexture("") end
     if tab.SetDisabledTexture then tab:SetDisabledTexture("") end
 
-    local bdFrame = CreateFrame("Frame", nil, tab, "BackdropTemplate")
+    local bdFrame, bdTex = CreateFlatFill(tab, C.HEADER_COLOR)
     bdFrame:SetAllPoints()
-    bdFrame:SetFrameLevel(tab:GetFrameLevel())
-    bdFrame:SetBackdrop({
-        bgFile   = C.FLAT_BACKDROP.bgFile,
-    })
-    bdFrame:SetBackdropColor(C.HEADER_COLOR[1], C.HEADER_COLOR[2], C.HEADER_COLOR[3], C.HEADER_COLOR[4])
 
     local text = tab.Text or (tab.GetFontString and tab:GetFontString())
     if text then
@@ -230,17 +238,17 @@ function SkinEngine:SkinTab(tab)
     end
 
     tab:HookScript("OnEnter", function()
-        bdFrame:SetBackdropColor(C.HIGHLIGHT_COLOR[1], C.HIGHLIGHT_COLOR[2], C.HIGHLIGHT_COLOR[3], C.HIGHLIGHT_COLOR[4])
+        bdTex:SetColorTexture(C.HIGHLIGHT_COLOR[1], C.HIGHLIGHT_COLOR[2], C.HIGHLIGHT_COLOR[3], C.HIGHLIGHT_COLOR[4])
     end)
     tab:HookScript("OnLeave", function()
-        bdFrame:SetBackdropColor(C.HEADER_COLOR[1], C.HEADER_COLOR[2], C.HEADER_COLOR[3], C.HEADER_COLOR[4])
+        bdTex:SetColorTexture(C.HEADER_COLOR[1], C.HEADER_COLOR[2], C.HEADER_COLOR[3], C.HEADER_COLOR[4])
     end)
 
     return bdFrame
 end
 
 --- Skin a PortraitFrame / ButtonFrameTemplate window with flat style.
---- Creates a child BackdropTemplate frame (never Mixin on Blizzard frame).
+--- Creates a plain child fill frame (never Mixin on Blizzard frame).
 --- Idempotent via windowBackdrops tracking table.
 --- @param frame table The window frame
 --- @param opts table|nil Optional flags: noCloseButton, noTitle, noPortrait, noBg, noNineSlice
@@ -290,13 +298,8 @@ function SkinEngine:SkinWindow(frame, opts)
     end
 
     -- Create flat backdrop as child frame
-    local bdFrame = CreateFrame("Frame", nil, frame, "BackdropTemplate")
+    local bdFrame = CreateFlatFill(frame, C.BACKDROP_COLOR)
     bdFrame:SetAllPoints()
-    bdFrame:SetFrameLevel(frame:GetFrameLevel())
-    bdFrame:SetBackdrop({
-        bgFile   = C.FLAT_BACKDROP.bgFile,
-    })
-    bdFrame:SetBackdropColor(C.BACKDROP_COLOR[1], C.BACKDROP_COLOR[2], C.BACKDROP_COLOR[3], C.BACKDROP_COLOR[4])
 
     -- Style title text
     if not opts.noTitle and frame.TitleContainer and frame.TitleContainer.TitleText then
