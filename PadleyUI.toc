@@ -36,3 +36,6 @@ Skins\ChatBubbles.lua
 Skins\TimerTracker.lua
 Skins\EncounterBar.lua
 PadleyUI.lua
+
+# TEMPORARY diagnostic — /puiprobe. Delete this line and Debug\AuraProbe.lua when done.
+Debug\AuraProbe.lua
