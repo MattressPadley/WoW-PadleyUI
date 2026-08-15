@@ -20,7 +20,7 @@ local kickOverlays = {}   -- keyed by UnitFrame → { frame, bar, icon, text, ti
 local customHealthBars = {}   -- Blizzard healthBar → our StatusBar
 -- Addon-owned cast bar. Blizzard has no nameplate cast bar to overlay in 12.1
 -- (unitFrame.castBar is nil), so this one stands alone.
-local customCastBars = {}     -- UnitFrame → { container, bar, shield, text }
+local customCastBars = {}     -- UnitFrame → { container, bar, shield, text, isChannel }
 local blizzardHealthColors = {} -- Blizzard healthBar → { r, g, b } (cached reaction color)
 local absorbBars = {}            -- UnitFrame → our absorb StatusBar
 local healCalcs = {}             -- UnitFrame → per-instance calculator
@@ -871,8 +871,9 @@ end
 --     rather than erroring.
 ----------------------------------------------------------------------------
 
-local CAST_INTERRUPTIBLE     = { 1, 0.7, 0 }      -- orange
-local CAST_NOT_INTERRUPTIBLE = { 0.7, 0.7, 0.7 }  -- grey
+local CAST_INTERRUPTIBLE     = { 1, 0.7, 0 }        -- orange — normal cast
+local CAST_CHANNEL           = { 0.1, 0.8, 0.2 }    -- green  — channelled
+local CAST_NOT_INTERRUPTIBLE = { 0.7, 0.7, 0.7 }    -- grey   — can't be kicked
 
 ----------------------------------------------------------------------------
 -- Suppressing Blizzard's own nameplate cast bar
@@ -1287,6 +1288,32 @@ local function DriveCastFill(custom, unit, isChannel, spellID)
     return true
 end
 
+-- Bar colour, one curve evaluation per channel, layered the way Plater's
+-- SplitEvaluateColor / GetCastColor stack them:
+--
+--   inner:  channelling ? green  : orange
+--   outer:  notInterruptible ? grey : <inner>
+--
+-- Precedence is deliberate — non-interruptible grey wins over channel green,
+-- because "you can't kick this" is the more useful signal and the existing
+-- non-interruptible behaviour is meant to stay intact. A channelled cast you
+-- *can* kick is green; one you can't is grey, same as any other.
+--
+-- Ordering also keeps this secret-safe without nesting a secret in an operand:
+-- the only value that can be secret (notInterruptible) is the OUTER condition,
+-- never an operand. The inner evaluation's operands are literals, so its result
+-- is a plain number by the time the outer call consumes it.
+local function CastColorComponent(index, notInterruptible, isChannel)
+    local eval = C_CurveUtil.EvaluateColorValueFromBoolean
+    local active = eval(isChannel, CAST_CHANNEL[index], CAST_INTERRUPTIBLE[index])
+    return eval(notInterruptible, CAST_NOT_INTERRUPTIBLE[index], active)
+end
+
+-- Colour to use when the interruptible state can't be read at all
+local function UnknownStateColor(isChannel)
+    return isChannel and CAST_CHANNEL or CAST_INTERRUPTIBLE
+end
+
 -- notInterruptible is secret on a restricted unit. It is never compared,
 -- negated or turned into a CanInterrupt boolean — it goes straight into the
 -- two APIs built to consume a secret boolean.
@@ -1301,27 +1328,25 @@ local function ApplyCastInterruptState(custom, unit, isChannel)
     end)
 
     if not ok or type(notInterruptible) == "nil" then
-        -- Unknown: interruptible colour, no shield. The
+        -- Unknown: interruptible colour for the cast type, no shield. The
         -- UNIT_SPELLCAST_(NOT_)INTERRUPTIBLE events correct it if it changes.
-        SetBarColor(custom, CAST_INTERRUPTIBLE[1], CAST_INTERRUPTIBLE[2],
-                    CAST_INTERRUPTIBLE[3])
+        local color = UnknownStateColor(isChannel)
+        SetBarColor(custom, color[1], color[2], color[3])
         pcall(custom.shield.SetAlpha, custom.shield, 0)
         return
     end
 
-    -- One curve evaluation per channel — Plater's SplitEvaluateColor shape
     local okColor, r, g, b = pcall(function()
-        local eval = C_CurveUtil.EvaluateColorValueFromBoolean
-        return eval(notInterruptible, CAST_NOT_INTERRUPTIBLE[1], CAST_INTERRUPTIBLE[1]),
-               eval(notInterruptible, CAST_NOT_INTERRUPTIBLE[2], CAST_INTERRUPTIBLE[2]),
-               eval(notInterruptible, CAST_NOT_INTERRUPTIBLE[3], CAST_INTERRUPTIBLE[3])
+        return CastColorComponent(1, notInterruptible, isChannel),
+               CastColorComponent(2, notInterruptible, isChannel),
+               CastColorComponent(3, notInterruptible, isChannel)
     end)
     if okColor then
         SetBarColor(custom, r, g, b)
     else
         ReportSkinRefusal("cast interrupt curve", r)
-        SetBarColor(custom, CAST_INTERRUPTIBLE[1], CAST_INTERRUPTIBLE[2],
-                    CAST_INTERRUPTIBLE[3])
+        local color = UnknownStateColor(isChannel)
+        SetBarColor(custom, color[1], color[2], color[3])
     end
 
     local okShield, err = pcall(custom.shield.SetAlphaFromBoolean, custom.shield,
@@ -1332,11 +1357,16 @@ local function ApplyCastInterruptState(custom, unit, isChannel)
     end
 end
 
--- Explicit interrupt state from the event name (non-secret) — no API query
+-- Explicit interrupt state from the event name (non-secret) — no API query.
+-- custom.isChannel is our own boolean, recorded at cast start, so picking the
+-- interruptible colour from it here reads nothing secret.
 local function SetCastInterruptible(unitFrame, interruptible)
     local custom = customCastBars[unitFrame]
     if not custom then return end
-    local color = interruptible and CAST_INTERRUPTIBLE or CAST_NOT_INTERRUPTIBLE
+    local color = CAST_NOT_INTERRUPTIBLE
+    if interruptible then
+        color = UnknownStateColor(custom.isChannel)
+    end
     SetBarColor(custom, color[1], color[2], color[3])
     pcall(custom.shield.SetAlpha, custom.shield, interruptible and 0 or 1)
 end
@@ -1356,6 +1386,10 @@ local function ShowCastBar(unitFrame, spellID, isChannelKnown)
             return
         end
     end
+
+    -- Our own boolean, not a secret read — the interruptible-state events need
+    -- it later to pick between the channel and cast colours.
+    custom.isChannel = isChannel
 
     -- Resolve once, non-secret or nil, and use it for both name and timing
     local usableSpellID = ReadSpellID(unit, isChannel, spellID)
