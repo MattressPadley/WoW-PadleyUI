@@ -5,6 +5,7 @@ frame:RegisterEvent("ADDON_LOADED")
 frame:SetScript("OnEvent", function(self, event, loadedAddon)
     if loadedAddon == addonName then
         ns.Config:Init()
+        ns.Movers:Init()
         print("|cff00ccffPadleyUI|r loaded!")
 
         -- Always-available skins (core UI, no optional dep)
@@ -59,13 +60,20 @@ frame:SetScript("OnEvent", function(self, event, loadedAddon)
     elseif loadedAddon == "Blizzard_UIPanels_Game" then
         ns.LootSkin:Apply()
         ns.CharacterFrameSkin:Apply()
+        ns.Movers:OnAddonLoaded(loadedAddon)
     elseif loadedAddon == "Blizzard_ObjectiveTracker" then
         ns.ObjectiveTrackerSkin:Apply()
     elseif loadedAddon == "Blizzard_TokenUI" then
         ns.CharacterFrameSkin:ApplyTokenFrame()
     elseif loadedAddon == "Blizzard_Professions" then
         ns.ProfessionsSkin:Apply()
+        ns.Movers:OnAddonLoaded(loadedAddon)
+    elseif loadedAddon == "Blizzard_ProfessionsBook" then
+        ns.Movers:OnAddonLoaded(loadedAddon)
+    elseif loadedAddon == "Blizzard_Collections" then
+        ns.Movers:OnAddonLoaded(loadedAddon)
     elseif loadedAddon == "Blizzard_WorldMap" then
         ns.WorldMapSkin:Apply()
+        ns.Movers:OnAddonLoaded(loadedAddon)
     end
 end)

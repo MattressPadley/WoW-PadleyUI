@@ -35,6 +35,9 @@ function Config:Init()
             end
         end
     end
+    -- Panel positions are keyed by frame id, so the one-level defaults merge
+    -- above (and the strict two-level Get/Set) don't fit — see Core/Movers.lua.
+    PadleyUI_DB.panels = PadleyUI_DB.panels or {}
     self.db = PadleyUI_DB
 
     self:CreateMinimapButton()
@@ -193,11 +196,8 @@ function Config:CreateConfigPanel()
     panel:SetSize(320, 350)
     panel:SetPoint("CENTER")
     panel:SetFrameStrata("DIALOG")
-    panel:SetMovable(true)
-    panel:EnableMouse(true)
-    panel:RegisterForDrag("LeftButton")
-    panel:SetScript("OnDragStart", panel.StartMoving)
-    panel:SetScript("OnDragStop", panel.StopMovingOrSizing)
+    -- Drag + position persistence, shared with the Blizzard panel movers
+    ns.Movers:Register("PadleyUIConfigPanel", panel)
     panel:SetBackdrop(C.FLAT_BACKDROP)
     panel:SetBackdropColor(C.BACKDROP_COLOR[1], C.BACKDROP_COLOR[2],
                            C.BACKDROP_COLOR[3], 0.95)
