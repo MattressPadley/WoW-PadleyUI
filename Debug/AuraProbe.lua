@@ -374,6 +374,12 @@ local function ReportCastAPIs()
          type(Enum and Enum.StatusBarInterpolation))
 end
 
+local function DebugNameOf(frame)
+    local ok, name = pcall(frame.GetDebugName, frame)
+    if ok and type(name) == "string" and name ~= "" then return name end
+    return SafeCall(frame, "GetName") or "<unnamed>"
+end
+
 local function DescribeCastRegions(node, indent)
     local ok, a, b, c, d, e, f, g, h, i, j, k, l = pcall(node.GetRegions, node)
     if not ok then return end
@@ -422,13 +428,20 @@ local function BuildCastReport()
         return
     end
 
-    local cb = SafeGet(uf, "castBar")
+    -- Same resolution order the skin uses, so the probe reports the frame the
+    -- addon will actually try to hide.
+    local cb, cbKey
+    for _, key in ipairs({ "CastBar", "castBar", "CastingBarFrame" }) do
+        local candidate = SafeGet(uf, key)
+        if IsWidget(candidate) then cb, cbKey = candidate, key break end
+    end
+
     if not IsWidget(cb) then
-        Emit(".castBar -> " .. tostring(cb) ..
-             "  <-- no Blizzard cast bar; expected in 12.1, we build our own")
+        Emit("no named Blizzard cast bar on .UnitFrame — see the StatusBar " ..
+             "sweep below for what to hide instead")
     else
-        Emit(".castBar <" .. (SafeCall(cb, "GetObjectType") or "?") .. "> " ..
-             (SafeCall(cb, "GetName") or "?"))
+        Emit("resolved Blizzard cast bar via ." .. cbKey .. " <" ..
+             (SafeCall(cb, "GetObjectType") or "?") .. "> " .. DebugNameOf(cb))
         local parent = SafeCall(cb, "GetParent")
         Emit("  parent: " .. (IsWidget(parent)
             and ((SafeCall(parent, "GetName") or "?") .. " <" ..
@@ -446,6 +459,48 @@ local function BuildCastReport()
         Emit("  children:")
         Walk(cb, ".castBar", 1)
     end
+
+    -- Named-field sweep for Blizzard's bar. Plater reaches it as
+    -- UnitFrame.CastBar (capital C) — see Plater.lua:3691.
+    Emit("== NAMED CASTBAR FIELDS on base.UnitFrame ==")
+    for _, key in ipairs({ "CastBar", "castBar", "CastingBarFrame",
+                           "HealthBarsContainer", "healthBar" }) do
+        local v = SafeGet(uf, key)
+        if IsWidget(v) then
+            Emit(string.format("  .%s <%s> %s shown=%s", key,
+                SafeCall(v, "GetObjectType") or "?", DebugNameOf(v),
+                tostring(SafeCall(v, "IsShown"))))
+        else
+            Emit("  ." .. key .. " -> " .. tostring(v))
+        end
+    end
+
+    -- Every StatusBar under the plate. Run this MID-CAST: Blizzard's cast bar
+    -- may only exist or only be shown while a cast is in progress.
+    Emit("== ALL STATUSBARS UNDER PLATE (run mid-cast) ==")
+    local seenBars, barCount = {}, 0
+    local function sweep(node, depth)
+        if depth > 4 or not IsWidget(node) or seenBars[node] then return end
+        seenBars[node] = true
+        if SafeCall(node, "GetObjectType") == "StatusBar" then
+            barCount = barCount + 1
+            local parent = SafeCall(node, "GetParent")
+            Emit(string.format("  #%d %s shown=%s visible=%s parent=%s",
+                barCount, DebugNameOf(node),
+                tostring(SafeCall(node, "IsShown")),
+                tostring(SafeCall(node, "IsVisible")),
+                IsWidget(parent) and DebugNameOf(parent) or "?"))
+        end
+        local getKids = SafeGet(node, "GetChildren")
+        if type(getKids) ~= "function" then return end
+        local ok, a, b, c, d, e, f, g, h, i, j, k, l, m, n = pcall(getKids, node)
+        if not ok then return end
+        for _, child in ipairs({ a, b, c, d, e, f, g, h, i, j, k, l, m, n }) do
+            sweep(child, depth + 1)
+        end
+    end
+    sweep(base, 0)
+    if barCount == 0 then Emit("  (no StatusBars found)") end
 
     -- Cross-check: every StatusBar under the plate, so a wrapper shape shows up.
     Emit("== TREE WALK (StatusBar cross-check) ==")
