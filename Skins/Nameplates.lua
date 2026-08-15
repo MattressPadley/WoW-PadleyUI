@@ -877,18 +877,40 @@ local CAST_NOT_INTERRUPTIBLE = { 0.7, 0.7, 0.7 }  -- grey
 ----------------------------------------------------------------------------
 -- Suppressing Blizzard's own nameplate cast bar
 --
--- The "hideCastbar" option-table flag (6ffcc41) did not take on this client,
--- so we hide the frame itself. Never :Hide() a Blizzard frame from tainted
--- code in a secure context — alpha-zero plus a Show/SetAlpha hook that puts it
--- straight back is the repo's established suppression (see CLAUDE.md).
+-- Three earlier attempts missed for the same underlying reason, so the
+-- reasoning is written down here.
 --
--- Plater doesn't need this in retail: it hides Blizzard's whole UnitFrame
--- (Plater.lua:4595 OnRetailNamePlateShow). We can't — our health bar is a
--- child of Blizzard's and mirrors its values — so we target the cast bar only.
+-- FIELD: it is unitFrame.castBar, LOWERCASE, on retail. Plater's retail
+-- suppression reads self.castBar (Plater.lua:4646, 4654, inside
+-- OnRetailNamePlateShow where self is Blizzard's UnitFrame). The capital
+-- .CastBar that 1eeada9 preferred is Plater's CLASSIC path only — every use is
+-- inside `if (not IS_WOW_PROJECT_MAINLINE)` (Plater.lua:3691, 3894) — so on
+-- retail 12.1 it is most likely nil and that direct-hide was hitting nothing.
+--
+-- LAZY CREATION: Blizzard doesn't build the bar until the unit actually casts.
+-- That is why the probe reported castBar == nil (it wasn't run mid-cast), and
+-- why the pre-a381a6b code — which used the right field and the right
+-- UnregisterAllEvents call — still never fired: it resolved at skin time, when
+-- the field is nil. So resolution happens at CAST START, not at plate add.
+-- Plater guards every use with `if self.castBar then` for the same reason.
+--
+-- DURABILITY: alpha-zero plus Show hooks only fight the bar reactively. Cut it
+-- off at the source as well — UnregisterAllEvents drops the frame's own
+-- registrations and CompactUnitFrame_UnregisterEvents drops the handlers
+-- CompactUnitFrame installed on top (Plater.lua:4643-4654). With no events the
+-- bar has nothing to react to; alpha-zero covers the cast already in flight.
+--
+-- Plater doesn't need any of this in retail because it hides Blizzard's whole
+-- UnitFrame (Plater.lua:4595). We can't — our health bar is a child of
+-- Blizzard's and mirrors its values — so we target the cast bar alone.
+--
+-- There is no CVar for this; don't go looking for one.
 ----------------------------------------------------------------------------
 
-local BLIZZARD_CASTBAR_FIELDS = { "CastBar", "castBar", "CastingBarFrame" }
-local suppressedCastBars = {}   -- Blizzard cast bar frame → true
+-- Lowercase first: that is the retail field.
+local BLIZZARD_CASTBAR_FIELDS = { "castBar", "CastBar", "CastingBarFrame" }
+local suppressedCastBars = {}      -- Blizzard cast bar frame → true
+local castBarFieldReported = false -- one-time note of which field won
 
 -- Never mistake one of our own bars for Blizzard's during discovery
 local function IsOurFrame(frame)
@@ -909,13 +931,24 @@ end
 
 local function DebugNameOf(frame)
     local ok, name = pcall(frame.GetDebugName, frame)
-    if ok and type(name) == "string" then return name end
+    if ok and type(name) == "string" and name ~= "" then return name end
     return "<unnamed>"
 end
 
--- Fallback for when the named fields don't resolve: the one StatusBar under the
--- unit frame that is neither the health bar nor ours. Deliberately refuses to
--- act on an ambiguous match — hiding the wrong bar here would take out the
+-- A frame with the Shown aspect marked returns a secret from IsShown, and
+-- comparing that would throw — treat unknown as "possibly shown" so an
+-- ambiguous frame is still considered rather than silently skipped.
+local function IsShownFrame(frame)
+    local ok, shown = pcall(frame.IsShown, frame)
+    if not ok then return false end
+    if issecretvalue and issecretvalue(shown) then return true end
+    return shown == true
+end
+
+-- Fallback for when neither named field resolves. Only runs mid-cast, and only
+-- considers bars that are actually on screen — Blizzard's is visible exactly
+-- then, which makes it a far better discriminator than shape alone. Refuses to
+-- act on an ambiguous match: hiding the wrong bar here would take out the
 -- health display.
 local function DiscoverBlizzardCastBar(unitFrame)
     local healthBar = SafeGet(unitFrame, "healthBar")
@@ -928,11 +961,13 @@ local function DiscoverBlizzardCastBar(unitFrame)
             if child ~= healthBar and child ~= healthContainer
                 and not IsOurFrame(child) then
                 if SafeObjectType(child) == "StatusBar" then
-                    if found and found ~= child then
-                        ambiguous = true
-                        return
+                    if IsShownFrame(child) then
+                        if found and found ~= child then
+                            ambiguous = true
+                            return
+                        end
+                        found = child
                     end
-                    found = child
                 elseif depth < 2 then
                     scan(child, depth + 1)
                     if ambiguous then return end
@@ -944,36 +979,39 @@ local function DiscoverBlizzardCastBar(unitFrame)
     scan(unitFrame, 0)
 
     if ambiguous or not found then return nil end
-    ReportSkinRefusal("blizzard castbar discovery",
-        "named field missing; hiding StatusBar " .. DebugNameOf(found))
     return found
 end
 
--- Returns whether a bar was resolved, so the caller can retry next frame if
--- Blizzard hasn't built it yet.
-local function HideBlizzardCastBar(unitFrame)
-    if not unitFrame then return false end
-
-    local frame
-    for _, key in ipairs(BLIZZARD_CASTBAR_FIELDS) do
-        local candidate = SafeGet(unitFrame, key)
-        if candidate and SafeObjectType(candidate) then
-            frame = candidate
-            break
-        end
-    end
-    if not frame then
-        frame = DiscoverBlizzardCastBar(unitFrame)
-    end
-    if not frame then return false end
+local function SuppressCastBarFrame(frame, via)
     if suppressedCastBars[frame] then return true end
     suppressedCastBars[frame] = true
 
+    if not castBarFieldReported then
+        castBarFieldReported = true
+        print("|cff00ccffPadleyUI:|r Blizzard nameplate cast bar resolved via "
+              .. via .. " (" .. DebugNameOf(frame) .. ") — suppressed")
+    end
+
+    -- Cut it off at the source first
+    TryWrite("blizzard castbar unregister", frame.UnregisterAllEvents, frame)
+    if type(CompactUnitFrame_UnregisterEvents) == "function" then
+        TryWrite("blizzard castbar CUF unregister",
+                 CompactUnitFrame_UnregisterEvents, frame)
+    end
+
+    -- Then the cast already in flight. Alpha first — it can't throw and it
+    -- can't be blocked, so it carries the suppression on its own if Hide is
+    -- unavailable. Hide only when the frame isn't protected: hiding a
+    -- protected frame in combat raises a blocked-action popup (Plater checks
+    -- IsProtected the same way at Plater.lua:4606).
     TryWrite("blizzard castbar alpha", frame.SetAlpha, frame, 0)
 
-    -- Blizzard re-shows and re-alphas the bar on every cast; put it straight
-    -- back both times. Guarding on the value keeps the SetAlpha hook from
-    -- recursing on our own write.
+    local okProt, isProtected = pcall(frame.IsProtected, frame)
+    if okProt and not isProtected then
+        TryWrite("blizzard castbar hide", frame.Hide, frame)
+    end
+
+    -- Backstop in case something still drives it
     TryWrite("blizzard castbar hook SetAlpha", hooksecurefunc, frame, "SetAlpha",
         function(self, alpha)
             if type(alpha) == "number" and alpha ~= 0 then
@@ -988,22 +1026,38 @@ local function HideBlizzardCastBar(unitFrame)
     return true
 end
 
--- Blizzard may build its cast bar during the very event we're reacting to, and
--- its handler can run after ours. Retry next frame when nothing resolved yet.
+-- allowDiscovery: only true on the cast-start path, where the structural
+-- fallback has a visible bar to find.
+local function HideBlizzardCastBar(unitFrame, allowDiscovery)
+    if not unitFrame then return false end
+
+    for _, key in ipairs(BLIZZARD_CASTBAR_FIELDS) do
+        local candidate = SafeGet(unitFrame, key)
+        if candidate and SafeObjectType(candidate) then
+            return SuppressCastBarFrame(candidate, "." .. key)
+        end
+    end
+
+    if not allowDiscovery then return false end
+
+    local discovered = DiscoverBlizzardCastBar(unitFrame)
+    if not discovered then return false end
+    return SuppressCastBarFrame(discovered, "structural discovery")
+end
+
+-- Blizzard builds the bar lazily, during the very event we're reacting to, and
+-- its handler can run after ours — so retry next frame when nothing resolved.
 local pendingCastBarHides = {}
 
 local function EnsureBlizzardCastBarHidden(unitFrame)
-    if HideBlizzardCastBar(unitFrame) then return end
+    if HideBlizzardCastBar(unitFrame, true) then return end
     if pendingCastBarHides[unitFrame] then return end
     pendingCastBarHides[unitFrame] = true
     C_Timer.After(0, function()
         pendingCastBarHides[unitFrame] = nil
-        HideBlizzardCastBar(unitFrame)
+        HideBlizzardCastBar(unitFrame, true)
     end)
 end
-
--- Same shield art Plater uses, desaturated
-local SHIELD_TEXTURE = [[Interface\GROUPFRAME\UI-GROUP-MAINTANKICON]]
 
 local function CreateCastBar(unitFrame)
     if customCastBars[unitFrame] then return end
@@ -1061,8 +1115,10 @@ local function CreateCastBar(unitFrame)
         container = container, bar = bar, shield = shield, text = text,
     }
 
-    -- Blizzard's bar may already exist on this plate
-    EnsureBlizzardCastBarHidden(unitFrame)
+    -- Named fields only here. Blizzard builds its bar lazily, so at plate-add
+    -- there is usually nothing to find — and running structural discovery
+    -- before the real bar exists risks latching onto some other StatusBar.
+    HideBlizzardCastBar(unitFrame, false)
 end
 
 local function HideCastBar(unitFrame)
@@ -1306,7 +1362,9 @@ local function ShowCastBar(unitFrame, spellID, isChannelKnown)
 
     local spellName = ReadSpellName(unit, isChannel, usableSpellID)
 
-    -- Blizzard's own bar may only be built the first time the unit casts
+    -- THE moment to resolve Blizzard's bar: it is built lazily, so this is the
+    -- first point at which the field is populated and a visible bar exists for
+    -- structural discovery to find.
     EnsureBlizzardCastBarHidden(unitFrame)
 
     -- SetText accepts a secret string: it marks the Text aspect secret on our
