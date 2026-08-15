@@ -72,6 +72,8 @@ frame:SetScript("OnEvent", function(self, event, loadedAddon)
         ns.Movers:OnAddonLoaded(loadedAddon)
     elseif loadedAddon == "Blizzard_Collections" then
         ns.Movers:OnAddonLoaded(loadedAddon)
+    elseif loadedAddon == "Blizzard_GroupFinder" then
+        ns.Movers:OnAddonLoaded(loadedAddon)
     elseif loadedAddon == "Blizzard_WorldMap" then
         ns.WorldMapSkin:Apply()
         ns.Movers:OnAddonLoaded(loadedAddon)

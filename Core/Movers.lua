@@ -43,6 +43,11 @@ local panels = {
         alreadyMovable = true,
     },
     {
+        id = "PVEFrame",
+        global = "PVEFrame",
+        addon = "Blizzard_GroupFinder",
+    },
+    {
         id = "WorldMapFrame",
         global = "WorldMapFrame",
         addon = "Blizzard_WorldMap",
