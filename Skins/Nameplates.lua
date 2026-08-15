@@ -844,10 +844,11 @@ end
 -- Nameplate cast bar (12.1) — addon-owned, Plater's model
 --
 -- a381a6b reskinned Blizzard's nameplate cast bar in place. That rested on a
--- wrong diagnosis: an in-game probe confirmed unitFrame.castBar is nil in 12.1
--- — Blizzard does not reliably build a nameplate cast bar at all. Plater does
--- not reskin one either; it builds its own and colours it through the
--- secret-safe APIs. Same model here.
+-- wrong diagnosis: an in-game probe confirmed unitFrame.castBar is nil in 12.1,
+-- so there was no frame there to reskin. Blizzard does still draw a cast bar —
+-- it just isn't reachable through that field — so it gets suppressed through
+-- the option tables below instead. Plater does the same: suppress Blizzard's,
+-- build its own, colour it through the secret-safe APIs.
 --
 -- Nothing below may depend on unitFrame.castBar — not for the build, not for
 -- anchoring, not for frame level. Our bar hangs off our own health bar. (The
@@ -867,6 +868,44 @@ end
 
 local CAST_INTERRUPTIBLE     = { 1, 0.7, 0 }      -- orange
 local CAST_NOT_INTERRUPTIBLE = { 0.7, 0.7, 0.7 }  -- grey
+
+-- Blizzard does build a nameplate cast bar after all — it just doesn't hang it
+-- off unitFrame.castBar, so there is no frame for us to reach for and hide. The
+-- supported lever is the option tables CompactUnitFrame reads when it sets a
+-- nameplate up: flag "hideCastbar" there and Blizzard never builds the bar.
+-- This is Plater's suppression (Plater.lua:7044-7053) and it only touches
+-- Blizzard's own frames — our bar is an independent frame and is unaffected.
+local NAMEPLATE_OPTION_TABLES = {
+    "DefaultCompactNamePlateFrameSetUpOptions",
+    "DefaultCompactNamePlateEnemyFrameOptions",
+    "DefaultCompactNamePlateFriendlyFrameOptions",
+}
+
+local function SuppressBlizzardCastBar()
+    if type(TextureLoadingGroupMixin) ~= "table"
+        or type(TextureLoadingGroupMixin.AddTexture) ~= "function" then
+        ReportSkinRefusal("blizzard castbar suppression",
+                          "TextureLoadingGroupMixin.AddTexture unavailable")
+        return
+    end
+
+    local applied = 0
+    for _, name in ipairs(NAMEPLATE_OPTION_TABLES) do
+        local options = _G[name]
+        if type(options) == "table" then
+            -- Plater's shape: a synthetic self wrapping the options table
+            if TryWrite("hideCastbar " .. name, TextureLoadingGroupMixin.AddTexture,
+                        { textures = options }, "hideCastbar") then
+                applied = applied + 1
+            end
+        end
+    end
+
+    if applied == 0 then
+        ReportSkinRefusal("blizzard castbar suppression",
+                          "no DefaultCompactNamePlate*Options table found")
+    end
+end
 
 -- Same shield art Plater uses, desaturated
 local SHIELD_TEXTURE = [[Interface\GROUPFRAME\UI-GROUP-MAINTANKICON]]
@@ -906,11 +945,13 @@ local function CreateCastBar(unitFrame)
     bg:SetColorTexture(C.BACKDROP_COLOR[1], C.BACKDROP_COLOR[2],
                        C.BACKDROP_COLOR[3], C.BACKDROP_COLOR[4])
 
-    -- Spell icon (square, left of bar)
-    local icon = bar:CreateTexture(nil, "ARTWORK")
+    -- Spell icon (square, left of bar). Sublevel 1 keeps it above the status
+    -- bar's own fill texture, which also lives in ARTWORK.
+    local icon = bar:CreateTexture(nil, "ARTWORK", nil, 1)
     icon:SetSize(iconSize, iconSize)
     icon:SetPoint("TOPRIGHT", bar, "TOPLEFT", -iconGap, 0)
     icon:SetTexCoord(unpack(C.ICON_CROP))
+    icon:Show()
 
     local iconBg = bar:CreateTexture(nil, "BACKGROUND")
     iconBg:SetPoint("TOPLEFT", icon, "TOPLEFT")
@@ -986,17 +1027,39 @@ local function ReadSpellID(unit, isChannel, spellID)
     return id
 end
 
--- Spell name and icon. A non-secret spellID gives a clean name/icon through
--- C_Spell.GetSpellInfo; the UnitCastingInfo fallback can hand back secret ones.
--- Nothing here branches on a value's contents — only on whether it exists.
+-- A usable icon is a non-secret, positive fileID (or a non-empty path). nil, 0
+-- and a secret fileID all render as nothing or as a white box, so they fall
+-- through to the placeholder instead of leaving the icon blank.
+local function UsableIcon(value)
+    if type(value) == "nil" then return nil end
+    if issecretvalue and issecretvalue(value) then return nil end
+    if type(value) == "string" then
+        return value ~= "" and value or nil
+    end
+    if type(value) ~= "number" then return nil end
+    if value <= 0 then return nil end
+    return value
+end
+
+-- Spell name and icon. A non-secret spellID gives a clean name/icon;
+-- C_Spell.GetSpellTexture is the purpose-built icon lookup, with GetSpellInfo's
+-- iconID behind it, and the UnitCastingInfo texture (which can be secret) last.
+-- Nothing here branches on a value's contents — only on whether it is usable.
 local function ReadSpellDisplay(unit, isChannel, spellID)
     local name, icon
 
     if spellID then
+        if type(C_Spell.GetSpellTexture) == "function" then
+            local okTex, tex = pcall(C_Spell.GetSpellTexture, spellID)
+            if okTex then icon = UsableIcon(tex) end
+        end
+
         local ok, info = pcall(C_Spell.GetSpellInfo, spellID)
         if ok and info then
             name = info.name
-            icon = info.iconID
+            if type(icon) == "nil" then
+                icon = UsableIcon(info.iconID) or UsableIcon(info.originalIconID)
+            end
         end
     end
 
@@ -1011,11 +1074,33 @@ local function ReadSpellDisplay(unit, isChannel, spellID)
         end)
         if ok then
             if type(name) == "nil" then name = n end
-            if type(icon) == "nil" then icon = t end
+            if type(icon) == "nil" then icon = UsableIcon(t) end
         end
     end
 
     return name, icon
+end
+
+-- Apply an icon and guarantee something lands. SetTexture resets the crop on
+-- some paths, so the crop is re-asserted after; and the texture is read back so
+-- a value that quietly renders nothing still ends up as the placeholder rather
+-- than an empty square.
+local function SetCastIcon(custom, value)
+    local icon = custom.icon
+
+    if not TryWrite("cast icon texture", icon.SetTexture, icon, value) then
+        pcall(icon.SetTexture, icon, QUESTION_MARK)
+    end
+
+    pcall(icon.SetTexCoord, icon,
+          C.ICON_CROP[1], C.ICON_CROP[2], C.ICON_CROP[3], C.ICON_CROP[4])
+    icon:Show()
+
+    local okRead, current = pcall(icon.GetTexture, icon)
+    if okRead and type(current) == "nil" then
+        ReportSkinRefusal("cast icon blank", "SetTexture left the icon empty")
+        pcall(icon.SetTexture, icon, QUESTION_MARK)
+    end
 end
 
 -- Progress fill under secret timing.
@@ -1193,14 +1278,11 @@ local function ShowCastBar(unitFrame, spellID, isChannelKnown)
 
     local spellName, spellIcon = ReadSpellDisplay(unit, isChannel, usableSpellID)
 
-    -- SetTexture takes a secret number, but a secret fileID renders as a white
-    -- box (see 9091bb1) — swap in the neutral placeholder instead. Keeping the
-    -- icon non-secret also keeps the kick overlay's GetTexture read clean.
-    local iconValue = spellIcon
-    if type(iconValue) == "nil" or (issecretvalue and issecretvalue(iconValue)) then
-        iconValue = QUESTION_MARK
-    end
-    pcall(custom.icon.SetTexture, custom.icon, iconValue)
+    -- ReadSpellDisplay has already rejected anything that renders blank (nil,
+    -- 0) or as a white box (a secret fileID, see 9091bb1), so this is either a
+    -- real icon or the neutral placeholder — never nothing. Keeping the icon
+    -- non-secret also keeps the kick overlay's GetTexture read clean.
+    SetCastIcon(custom, spellIcon or QUESTION_MARK)
 
     -- SetText accepts a secret string: it marks the Text aspect secret on our
     -- own FontString, which is fine and is what the name overlay already does.
@@ -1344,6 +1426,10 @@ end
 
 function NameplateSkin:Apply()
     SetCVar("nameplateShowFriendlyNPCs", 0)
+
+    -- Before any plate is set up: stop Blizzard building its own cast bar, so
+    -- ours isn't a second bar next to it.
+    SuppressBlizzardCastBar()
 
     local eventFrame = CreateFrame("Frame")
     eventFrame:RegisterEvent("NAME_PLATE_CREATED")
