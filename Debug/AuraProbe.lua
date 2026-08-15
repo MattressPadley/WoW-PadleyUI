@@ -7,6 +7,8 @@
 -- hook we can register a skinning callback on?
 --
 -- Slash command: /puiprobe  (page 2+: /puiprobe 2)
+--   /puiprobe cast  — cast bar identity dump for nameplate-castbar-reskin
+--                     (which object is Blizzard's nameplate cast bar?)
 --
 -- READ-ONLY. This file must never call SetAlpha/SetPoint/Show/Hide, never hook
 -- anything, never reparent, and never write a key onto a Blizzard frame.
@@ -331,8 +333,97 @@ local function BuildReport()
     Emit("=== end (" .. #out .. " lines) ===")
 end
 
-local function Run(page)
-    BuildReport()
+-- ---------------------------------------------------------------------------
+-- Cast bar identity probe (/puiprobe cast)
+--
+-- Answers the nameplate-castbar-reskin open question: which object is
+-- Blizzard's nameplate cast bar, and what does it own? Still READ-ONLY.
+-- ---------------------------------------------------------------------------
+
+local function DescribeCastRegions(node, indent)
+    local ok, a, b, c, d, e, f, g, h, i, j, k, l = pcall(node.GetRegions, node)
+    if not ok then return end
+    local regs = { a, b, c, d, e, f, g, h, i, j, k, l }
+    for idx = 1, 12 do
+        local r = regs[idx]
+        if IsWidget(r) then
+            local rt = SafeCall(r, "GetObjectType") or "?"
+            local atlas = SafeCall(r, "GetAtlas")
+            local tex = SafeCall(r, "GetTexture")
+            local kind = atlas and ("atlas:" .. tostring(atlas))
+                or (tex ~= nil and ("tex:" .. type(tex)) or "tex:none/secret")
+            Emit(string.format("%sregion#%d <%s> %s", indent, idx, rt,
+                (rt == "FontString") and "(fontstring)" or kind))
+        end
+    end
+end
+
+local function BuildCastReport()
+    out = {}
+    visited = {}
+
+    Emit("=== PadleyUI cast bar probe (12.1) ===")
+    Emit("restrictions active: " .. tostring(
+        C_Secrets and C_Secrets.HasSecretRestrictions and C_Secrets.HasSecretRestrictions() or "n/a"))
+
+    local base = C_NamePlate and C_NamePlate.GetNamePlateForUnit
+        and C_NamePlate.GetNamePlateForUnit("target")
+    if not base and C_NamePlate and C_NamePlate.GetNamePlates then
+        local plates = C_NamePlate.GetNamePlates()
+        if plates and plates[1] then
+            base = plates[1]
+            Emit("(no target nameplate — using first visible nameplate)")
+        end
+    end
+    if not base then
+        Emit("NO NAMEPLATE FOUND. Target a caster mob mid-cast and retry.")
+        return
+    end
+
+    local uf = SafeGet(base, "UnitFrame")
+    if not IsWidget(uf) then
+        Emit("base has no .UnitFrame")
+        return
+    end
+
+    local cb = SafeGet(uf, "castBar")
+    if not IsWidget(cb) then
+        Emit(".castBar -> " .. tostring(cb) .. "  <-- NOT a widget; reskin will report this")
+    else
+        Emit(".castBar <" .. (SafeCall(cb, "GetObjectType") or "?") .. "> " ..
+             (SafeCall(cb, "GetName") or "?"))
+        local parent = SafeCall(cb, "GetParent")
+        Emit("  parent: " .. (IsWidget(parent)
+            and ((SafeCall(parent, "GetName") or "?") .. " <" ..
+                 (SafeCall(parent, "GetObjectType") or "?") .. ">")
+            or "?") .. "   (same as UnitFrame: " .. tostring(parent == uf) .. ")")
+        Emit("  shown: " .. tostring(SafeCall(cb, "IsShown")) ..
+             "  visible: " .. tostring(SafeCall(cb, "IsVisible")) ..
+             "  level: " .. tostring(SafeCall(cb, "GetFrameLevel")))
+        Emit("  fill: " .. tostring(SafeCall(cb, "GetStatusBarTexture") ~= nil) ..
+             "  .Icon: " .. tostring(IsWidget(SafeGet(cb, "Icon"))) ..
+             "  .Text: " .. tostring(IsWidget(SafeGet(cb, "Text"))) ..
+             "  .BorderShield: " .. tostring(IsWidget(SafeGet(cb, "BorderShield"))))
+        Emit("  regions:")
+        DescribeCastRegions(cb, "    ")
+        Emit("  children:")
+        Walk(cb, ".castBar", 1)
+    end
+
+    -- Cross-check: every StatusBar under the plate, so a wrapper shape shows up.
+    Emit("== TREE WALK (StatusBar cross-check) ==")
+    visited = {}
+    Walk(base, "base", 0)
+
+    Emit("=== end (" .. #out .. " lines) ===")
+end
+
+local function Run(page, mode)
+    if mode == "cast" then
+        BuildCastReport()
+    else
+        BuildReport()
+    end
 
     local total = #out
     local pages = math.max(1, math.ceil(total / PAGE_SIZE))
@@ -347,14 +438,17 @@ local function Run(page)
         print(out[i])
     end
     if page < pages then
-        print("|cff66ccffPUIPROBE|r more: /puiprobe " .. (page + 1))
+        print("|cff66ccffPUIPROBE|r more: /puiprobe " ..
+              ((mode == "cast") and "cast " or "") .. (page + 1))
     end
 end
 
 SLASH_PUIPROBE1 = "/puiprobe"
 SlashCmdList["PUIPROBE"] = function(msg)
-    local page = tonumber((msg or ""):match("%d+"))
-    local ok, err = pcall(Run, page)
+    msg = msg or ""
+    local page = tonumber(msg:match("%d+"))
+    local mode = msg:lower():find("cast", 1, true) and "cast" or nil
+    local ok, err = pcall(Run, page, mode)
     if not ok then
         print("|cffff5555PUIPROBE error:|r " .. tostring(err))
     end
