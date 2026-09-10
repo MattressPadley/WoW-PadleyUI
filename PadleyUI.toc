@@ -7,7 +7,7 @@
 ## SavedVariables: PadleyUI_DB
 
 Core\Constants.lua
-Core\HealPrediction.lua
+Core\RestoredRegions.lua
 Core\Fonts.lua
 Core\SkinEngine.lua
 Core\Config.lua

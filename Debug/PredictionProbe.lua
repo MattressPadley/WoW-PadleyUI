@@ -1,9 +1,16 @@
 -- ============================================================================
 -- TEMPORARY / THROWAWAY DIAGNOSTIC FILE — DELETE BEFORE SHIPPING
 --
--- Purpose (STEP 0 of heal-prediction-restore): enumerate the ACTUAL
--- heal-prediction / absorb parentKeys present at runtime in 12.1, so the skin
--- exempts the real keys rather than guessed ones.
+-- Purpose (STEP 0 of the chrome-strip restore work): enumerate the ACTUAL
+-- parentKeys present at runtime in 12.1 -- heal prediction, absorbs, and the
+-- threat / target-selection highlights -- so the skin exempts the real keys
+-- rather than guessed ones.
+--
+-- The CUF dump opens with a CHROME-SWEEP EXEMPTION VERDICT block: one row per
+-- region the sweep has an opinion about, each printing role= and exempt=, each
+-- marked OK or !!. Read that first; everything below it is raw enumeration.
+-- A row printing present=false for an "exempt" key means the parentKey is wrong
+-- and the exemption is a silent no-op.
 --
 -- Slash command: /puipredict            — player + target + first CUF
 --                /puipredict 2          — page 2
@@ -78,9 +85,45 @@ local CANDIDATE_KEYS = {
     "MyHealPredictionBar", "OtherHealPredictionBar",
     "TotalAbsorbBar", "TotalAbsorbBarOverlay",
     "OverAbsorbGlow", "HealAbsorbBar", "OverHealAbsorbGlow",
+    -- Restored chrome-strip regions (12.1 CompactUnitFrameTemplate)
+    "aggroHighlight", "selectionHighlight",
     -- Things that live alongside them and must NOT be exempted by accident
     "HealthBar", "healthBar", "AnimatedLossBar", "HealthBarMask",
     "TiledFillOverlay", "HealthBarsContainer",
+    "background", "aggroFlash", "classificationIndicator",
+    "roleIcon", "readyCheckIcon", "centerStatusIcon", "PartyMemberOverlay",
+}
+
+-- Keys we expect the CompactUnitFrame chrome sweep to have opinions about, and
+-- what the audit says should happen to each. Printed as a verdict block so a
+-- silent no-op (wrong parentKey => region simply absent) is impossible to miss.
+--   exempt  = must survive the sweep and carry a role
+--   chrome  = must stay suppressed
+--   preserve= survives via the explicit preserve set, NOT via the role registry
+--   absent  = confirmed not to exist on this template in 12.1
+local CUF_EXPECTATIONS = {
+    { key = "aggroHighlight",     want = "exempt",   role = "aggro"     },
+    { key = "selectionHighlight", want = "exempt",   role = "selection" },
+    { key = "myHealPrediction",   want = "exempt",   role = "myHeal"    },
+    { key = "otherHealPrediction",want = "exempt",   role = "otherHeal" },
+    { key = "totalAbsorb",        want = "exempt",   role = "absorb"    },
+    { key = "myHealAbsorb",       want = "exempt",   role = "healAbsorb"},
+    { key = "totalAbsorbOverlay", want = "chrome",   role = "-"         },
+    { key = "overAbsorbGlow",     want = "chrome",   role = "-"         },
+    { key = "background",         want = "chrome",   role = "-"         },
+    { key = "aggroFlash",         want = "chrome",   role = "-"         },
+    { key = "roleIcon",           want = "preserve", role = "-"         },
+    { key = "readyCheckIcon",     want = "preserve", role = "-"         },
+    { key = "centerStatusIcon",   want = "preserve", role = "-"         },
+    -- Confirmed absent from CompactUnitFrameTemplate in the 12.1 source. If any
+    -- of these ever light up, the audit needs redoing.
+    { key = "raidTargetIcon",     want = "absent",   role = "-"         },
+    { key = "RaidTargetIcon",     want = "absent",   role = "-"         },
+    { key = "leaderIcon",         want = "absent",   role = "-"         },
+    { key = "LeaderIcon",         want = "absent",   role = "-"         },
+    { key = "guideIcon",          want = "absent",   role = "-"         },
+    { key = "masterLooterIcon",   want = "absent",   role = "-"         },
+    { key = "PartyMemberOverlay", want = "absent",   role = "-"         },
 }
 
 local function DescribeRegion(obj, label, indent)
@@ -96,6 +139,62 @@ local function DescribeRegion(obj, label, indent)
         tostring(role or "-"), tostring(exempt and true or false)))
     Emit(string.format("%s    debugName=%s%s", indent, DebugNameOf(obj),
         (masks ~= nil) and "  hasMask=yes" or ""))
+end
+
+-- ---------------------------------------------------------------------------
+-- Exemption verdict block. This is the thing to read after a cold /reload:
+-- every row should print OK. A row that prints MISSING for an "exempt" key means
+-- the parentKey is wrong and the exemption is a silent no-op.
+-- ---------------------------------------------------------------------------
+
+local function DumpExemptionVerdict(cuf, label)
+    Emit("")
+    Emit("== CHROME-SWEEP EXEMPTION VERDICT == " .. tostring(label))
+    if not IsWidget(cuf) then
+        Emit("  (no CompactUnitFrame available)")
+        return
+    end
+
+    local bad = 0
+    for _, e in ipairs(CUF_EXPECTATIONS) do
+        local v = SafeGet(cuf, e.key)
+        local present = IsWidget(v)
+        local role, exempt, alpha, shown = "-", false, "-", "-"
+        if present then
+            role = ns.HealPrediction and ns.HealPrediction:Role(v) or "-"
+            exempt = ns.HealPrediction and ns.HealPrediction:IsExempt(v) or false
+            alpha = tostring(SafeCall(v, "GetAlpha"))
+            shown = tostring(SafeCall(v, "IsShown"))
+        end
+
+        local ok
+        if e.want == "exempt" then
+            ok = present and exempt and (role == e.role)
+        elseif e.want == "chrome" then
+            ok = present and not exempt
+        elseif e.want == "preserve" then
+            ok = present
+        else -- absent
+            ok = not present
+        end
+        if not ok then bad = bad + 1 end
+
+        Emit(string.format("  [%s] %-20s want=%-8s present=%-5s role=%-10s exempt=%-5s alpha=%s shown=%s",
+            ok and "OK" or "!!", e.key, e.want, tostring(present),
+            tostring(role or "-"), tostring(exempt and true or false), alpha, shown))
+    end
+    Emit("  -> " .. (bad == 0 and "all rows OK" or (bad .. " row(s) need attention")))
+
+    -- Dispel cue. Forbidden object in 12.1 (Blizzard_PrivateAurasUI scoped
+    -- modifier), so we only report presence — never call a method on it.
+    local dispel = SafeGet(cuf, "DispelOverlay")
+    if dispel == nil then
+        Emit("  DispelOverlay: absent (only exists while a dispellable debuff is up)")
+    else
+        local forbidden = SafeCall(dispel, "IsForbidden")
+        Emit("  DispelOverlay: present  forbidden=" .. tostring(forbidden) ..
+             "  (untouched by our sweep by construction - not a region of the CUF)")
+    end
 end
 
 -- ---------------------------------------------------------------------------
@@ -251,6 +350,7 @@ local function BuildReport(mode)
     if mode ~= "uf" then
         local cuf, cufName = FirstCompactFrame()
         if IsWidget(cuf) then
+            DumpExemptionVerdict(cuf, cufName)
             DumpOwner(cuf, "CUF " .. tostring(cufName))
             DumpOwner(SafeGet(cuf, "healthBar"), "CUF " .. tostring(cufName) .. ".healthBar")
         else

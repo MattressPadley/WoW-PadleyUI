@@ -106,8 +106,19 @@ end
 -- allocated fill texture lands on, and loses the tie because it was created
 -- first. OVERLAY/7 puts it unambiguously on top regardless of what the bar does.
 -- readyCheckIcon (frameLevel 120) and centerStatusIcon (frameLevel 110) are real
--- child Frames, already above the bar; CompactUnitFrame has no raid target marker
--- region of its own (raid markers ride on the nameplate/unit frames instead).
+-- child Frames, already above the bar.
+--
+-- Confirmed against the 12.1 client source: CompactUnitFrameTemplate has NO raid
+-- target marker region and NO leader / assistant / master-looter icon of its own,
+-- on party OR raid layouts. The only regions on the template are background, the
+-- heal-prediction/absorb set, name, statusText, roleIcon, aggroHighlight and
+-- selectionHighlight; the only child frames are healthBar, TempMaxHealthLoss,
+-- powerBar, centerStatusIcon, readyCheckIcon and pingIconFrame. Main tank /
+-- main assist ride on roleIcon (atlases RaidFrame-Icon-MainTank /
+-- RaidFrame-Icon-MainAssist), which is already preserved; raid target markers
+-- ride on nameplates and the target frame. So there is nothing for the sweep to
+-- have hidden and nothing to add to the preserve set.
+--
 -- Layer-only writes: no geometry, no anchors, no reads — taint-safe.
 local function RaiseFrameIcons(frame)
     if frame.roleIcon and frame.roleIcon.SetDrawLayer then
@@ -268,14 +279,18 @@ end
 ---------------------------------------------------------------------------
 
 local function StripChrome(frame)
-    -- Alpha-zero background and highlights
+    -- Alpha-zero the frame background. Pure chrome, no information on it.
     if frame.background then frame.background:SetAlpha(0) end
-    if frame.aggroHighlight then frame.aggroHighlight:SetAlpha(0) end
-    if frame.selectionHighlight then frame.selectionHighlight:SetAlpha(0) end
 
-    -- Heal prediction / absorb: deliberately NOT hidden any more. Blizzard draws
-    -- and sizes these with the real numbers (secret to us in combat); we only
-    -- flatten the texture and recolour. See Core/HealPrediction.lua.
+    -- Game-data regions are deliberately NOT hidden any more. Blizzard draws,
+    -- sizes, shows/hides and (for threat) colours these with the real values,
+    -- which are secret to us in combat; we only flatten texture/colour/alpha.
+    -- The registry covers heal prediction, absorbs, aggroHighlight (threat) and
+    -- selectionHighlight (your current target). See Core/RestoredRegions.lua.
+    --
+    -- Registration MUST happen before the sweep below: it is what seeds the role
+    -- cache that IsExempt() consults, and StripChrome re-runs on every
+    -- CompactUnitFrame_UpdateAll.
     HP:Register(frame, frame.healthBar)
 
     -- Strip all decorative texture regions, but preserve icons Blizzard manages
@@ -298,12 +313,25 @@ local function StripChrome(frame)
     -- the fill texture can never bury the role icon again.
     RaiseFrameIcons(frame)
 
-    -- Ensure the PartyMemberOverlay (leader crown, role, PvP icons) stays visible
+    -- Ensure the PartyMemberOverlay (leader crown, role, PvP icons) stays visible.
+    -- This only exists on the classic-art PartyMemberFrame; CompactUnitFrame has
+    -- no equivalent in 12.1 (see the raid-marker/leader note on RaiseFrameIcons).
     local overlay = frame.PartyMemberOverlay
     if overlay then
         overlay:SetAlpha(1)
         if overlay.LeaderIcon then overlay.LeaderIcon:SetAlpha(1) end
     end
+
+    -- Dispel cue: nothing to do here, and nothing we are allowed to do. In 12.1
+    -- the dispel highlight is no longer a region on the CompactUnitFrame. It is
+    -- `frame.DispelOverlay`, a Frame acquired from a pool inside
+    -- Blizzard_PrivateAurasUI's `<ScopedModifier forbidden="true"
+    -- hideFromGlobalEnv="true">` block and re-parented onto the unit button at
+    -- runtime. Its Background/Gradient/Border textures and its three
+    -- dispelDebuffFrames belong to THAT frame, so frame:GetRegions() above never
+    -- reaches them and the sweep cannot hide them. They are also forbidden
+    -- objects: any method call on them from addon code raises. So the dispel
+    -- school colour is Blizzard's, intact, and untouchable — by design.
 end
 
 ---------------------------------------------------------------------------
