@@ -2,6 +2,7 @@ local _, ns = ...
 
 local C = ns.C
 local SE = ns.SkinEngine
+local HP = ns.HealPrediction
 
 local UnitFrameSkin = {}
 ns.UnitFrameSkin = UnitFrameSkin
@@ -294,24 +295,32 @@ local function SkinHealthBar(bar, unit, cfg)
 
     SE:SkinStatusBar(bar)
 
+    -- Learn the heal-prediction/absorb region identities before any sweep runs.
+    -- KillRegion installs an irreversible alpha-0 hold hook, so a region that
+    -- slips through here can never be shown again this session.
+    HP:Register(bar, bar:GetParent())
+
     -- Persistently hide ALL non-fill texture regions on the bar
     local fillTex = bar:GetStatusBarTexture()
     for i = 1, bar:GetNumRegions() do
         local region = select(i, bar:GetRegions())
-        if region and region:GetObjectType() == "Texture" and region ~= fillTex then
+        if region and region:GetObjectType() == "Texture" and region ~= fillTex
+            and not HP:IsExempt(region) then
             KillRegion(region)
         end
     end
 
     -- Persistently hide ALL child frames of the health bar
-    -- (TotalAbsorbBar, TiledFillOverlay, absorb glows, etc.)
+    -- (TiledFillOverlay, absorb glows, etc.) — but not the prediction/absorb
+    -- bars themselves, which Blizzard sizes from untainted numbers.
     for i = 1, select("#", bar:GetChildren()) do
         local child = select(i, bar:GetChildren())
-        if child and child ~= barBgFrames[bar] then
+        if child and child ~= barBgFrames[bar] and not HP:IsExempt(child) then
             KillRegion(child)
             for j = 1, child:GetNumRegions() do
                 local region = select(j, child:GetRegions())
-                if region and region:GetObjectType() == "Texture" then
+                if region and region:GetObjectType() == "Texture"
+                    and not HP:IsExempt(region) then
                     KillRegion(region)
                 end
             end
@@ -328,6 +337,7 @@ local function SkinHealthBar(bar, unit, cfg)
 
     frameUnits[bar] = unit
     ApplyHealthColor(bar)
+    HP:Apply(bar, bar:GetParent())
 
     if not hookedBars[bar] then
         hookedBars[bar] = true
@@ -491,7 +501,7 @@ local function StripAllTextures(frame)
     if not frame then return end
     for i = 1, frame:GetNumRegions() do
         local region = select(i, frame:GetRegions())
-        if region and region:GetObjectType() == "Texture" then
+        if region and region:GetObjectType() == "Texture" and not HP:IsExempt(region) then
             region:SetAlpha(0)
         end
     end
@@ -500,24 +510,33 @@ end
 -- Persistently hide all textures and overlay children on HealthBarsContainer
 local function StripHealthBarsContainer(hbc, healthBar)
     if not hbc then return end
+
+    -- Exempt-and-reskin rather than deny-all-but-HealthBar: the heal-prediction
+    -- and absorb bars live on this container, and they are the only way to see
+    -- incoming heals / shields without reading values we are not allowed to read.
+    HP:Register(hbc, healthBar)
+
     for i = 1, hbc:GetNumRegions() do
         local region = select(i, hbc:GetRegions())
-        if region and region:GetObjectType() == "Texture" then
+        if region and region:GetObjectType() == "Texture" and not HP:IsExempt(region) then
             KillRegion(region)
         end
     end
     for i = 1, select("#", hbc:GetChildren()) do
         local child = select(i, hbc:GetChildren())
-        if child and child ~= healthBar then
+        if child and child ~= healthBar and not HP:IsExempt(child) then
             KillRegion(child)
             for j = 1, child:GetNumRegions() do
                 local region = select(j, child:GetRegions())
-                if region and region:GetObjectType() == "Texture" then
+                if region and region:GetObjectType() == "Texture"
+                    and not HP:IsExempt(region) then
                     KillRegion(region)
                 end
             end
         end
     end
+
+    HP:Apply(hbc, healthBar)
 end
 
 ---------------------------------------------------------------------------
@@ -725,25 +744,29 @@ local function SkinTargetFrame()
         -- Re-strip health bar children (AnimatedLossBar, absorb bars, etc.)
         -- Blizzard may re-show them on target change
         if targetHealthBar then
+            HP:Register(targetHealthBar, targetHealthBar:GetParent())
             local fillTex = targetHealthBar:GetStatusBarTexture()
             for i = 1, targetHealthBar:GetNumRegions() do
                 local region = select(i, targetHealthBar:GetRegions())
-                if region and region:GetObjectType() == "Texture" and region ~= fillTex then
+                if region and region:GetObjectType() == "Texture" and region ~= fillTex
+                    and not HP:IsExempt(region) then
                     KillRegion(region)
                 end
             end
             for i = 1, select("#", targetHealthBar:GetChildren()) do
                 local child = select(i, targetHealthBar:GetChildren())
-                if child and child ~= barBgFrames[targetHealthBar] then
+                if child and child ~= barBgFrames[targetHealthBar] and not HP:IsExempt(child) then
                     KillRegion(child)
                     for j = 1, child:GetNumRegions() do
                         local region = select(j, child:GetRegions())
-                        if region and region:GetObjectType() == "Texture" then
+                        if region and region:GetObjectType() == "Texture"
+                            and not HP:IsExempt(region) then
                             KillRegion(region)
                         end
                     end
                 end
             end
+            HP:Apply(targetHealthBar, targetHealthBar:GetParent())
             -- Re-enforce flat texture
             EnforceFlatTexture(targetHealthBar)
         end
@@ -906,25 +929,29 @@ local function SkinFocusFrame()
 
         -- Re-strip health bar children
         if focusHealthBar then
+            HP:Register(focusHealthBar, focusHealthBar:GetParent())
             local fillTex = focusHealthBar:GetStatusBarTexture()
             for i = 1, focusHealthBar:GetNumRegions() do
                 local region = select(i, focusHealthBar:GetRegions())
-                if region and region:GetObjectType() == "Texture" and region ~= fillTex then
+                if region and region:GetObjectType() == "Texture" and region ~= fillTex
+                    and not HP:IsExempt(region) then
                     KillRegion(region)
                 end
             end
             for i = 1, select("#", focusHealthBar:GetChildren()) do
                 local child = select(i, focusHealthBar:GetChildren())
-                if child and child ~= barBgFrames[focusHealthBar] then
+                if child and child ~= barBgFrames[focusHealthBar] and not HP:IsExempt(child) then
                     KillRegion(child)
                     for j = 1, child:GetNumRegions() do
                         local region = select(j, child:GetRegions())
-                        if region and region:GetObjectType() == "Texture" then
+                        if region and region:GetObjectType() == "Texture"
+                            and not HP:IsExempt(region) then
                             KillRegion(region)
                         end
                     end
                 end
             end
+            HP:Apply(focusHealthBar, focusHealthBar:GetParent())
             EnforceFlatTexture(focusHealthBar)
         end
 
@@ -1133,8 +1160,27 @@ function UnitFrameSkin:Apply()
         if frameUnits[statusbar] then
             ApplyHealthColor(statusbar)
             EnforceFlatTexture(statusbar)
+            HP:Apply(statusbar, statusbar:GetParent())
         end
     end)
+
+    -- Re-flatten heal prediction / absorb after Blizzard's own update pass.
+    -- Hooking the global is safe; hooking the mixin table is not. This writes
+    -- texture + colour only and never reads a heal or absorb amount, so it
+    -- cannot touch a secret value.
+    if type(_G.UnitFrameHealPredictionBars_Update) == "function" then
+        hooksecurefunc("UnitFrameHealPredictionBars_Update", function(frame)
+            if not frame then return end
+            local content = frame.PlayerFrameContent or frame.TargetFrameContent
+            local main = content and (content.PlayerFrameContentMain or content.TargetFrameContentMain)
+            local hbc = main and main.HealthBarsContainer
+            if hbc then
+                HP:Apply(hbc, hbc.HealthBar)
+            else
+                HP:Apply(frame, frame.healthbar or frame.HealthBar)
+            end
+        end)
+    end
 
     -- Hook UpdateAuras on instances — fires after Blizzard finishes creating/updating
     -- aura pool frames, so we skin every active aura button each refresh.

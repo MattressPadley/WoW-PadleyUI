@@ -2,6 +2,7 @@ local _, ns = ...
 
 local C = ns.C
 local SE = ns.SkinEngine
+local HP = ns.HealPrediction
 
 local PartyFrameSkin = {}
 ns.PartyFrameSkin = PartyFrameSkin
@@ -111,11 +112,16 @@ local function SkinHealthBar(frame)
     SE:SkinStatusBar(bar)
     RemoveBarMasks(bar)
 
+    -- Blizzard owns the geometry of the heal-prediction/absorb regions; we only
+    -- need their identities here so the sweep below leaves them alone.
+    HP:Register(frame, bar)
+
     -- Alpha-zero all non-fill texture regions
     local fillTex = bar:GetStatusBarTexture()
     for i = 1, bar:GetNumRegions() do
         local region = select(i, bar:GetRegions())
-        if region and region:GetObjectType() == "Texture" and region ~= fillTex then
+        if region and region:GetObjectType() == "Texture" and region ~= fillTex
+            and not HP:IsExempt(region) then
             region:SetAlpha(0)
         end
     end
@@ -223,16 +229,11 @@ local function StripChrome(frame)
     if frame.background then frame.background:SetAlpha(0) end
     if frame.aggroHighlight then frame.aggroHighlight:SetAlpha(0) end
     if frame.selectionHighlight then frame.selectionHighlight:SetAlpha(0) end
-    -- Heal prediction / absorb overlays
-    if frame.myHealPrediction then frame.myHealPrediction:SetAlpha(0) end
-    if frame.otherHealPrediction then frame.otherHealPrediction:SetAlpha(0) end
-    if frame.totalAbsorb then frame.totalAbsorb:SetAlpha(0) end
-    if frame.totalAbsorbOverlay then frame.totalAbsorbOverlay:SetAlpha(0) end
-    if frame.myHealAbsorb then frame.myHealAbsorb:SetAlpha(0) end
-    if frame.myHealAbsorbLeftShadow then frame.myHealAbsorbLeftShadow:SetAlpha(0) end
-    if frame.myHealAbsorbRightShadow then frame.myHealAbsorbRightShadow:SetAlpha(0) end
-    if frame.overAbsorbGlow then frame.overAbsorbGlow:SetAlpha(0) end
-    if frame.overHealAbsorbGlow then frame.overHealAbsorbGlow:SetAlpha(0) end
+
+    -- Heal prediction / absorb: deliberately NOT hidden any more. Blizzard draws
+    -- and sizes these with the real numbers (secret to us in combat); we only
+    -- flatten the texture and recolour. See Core/HealPrediction.lua.
+    HP:Register(frame, frame.healthBar)
 
     -- Strip all decorative texture regions, but preserve icons Blizzard manages
     local preserve = {}
@@ -242,10 +243,13 @@ local function StripChrome(frame)
 
     for i = 1, frame:GetNumRegions() do
         local region = select(i, frame:GetRegions())
-        if region and region:GetObjectType() == "Texture" and not preserve[region] then
+        if region and region:GetObjectType() == "Texture" and not preserve[region]
+            and not HP:IsExempt(region) then
             region:SetAlpha(0)
         end
     end
+
+    HP:Apply(frame, frame.healthBar)
 
     -- Ensure the PartyMemberOverlay (leader crown, role, PvP icons) stays visible
     local overlay = frame.PartyMemberOverlay
@@ -481,6 +485,18 @@ end
 
 function PartyFrameSkin:Apply()
     HideTitles()
+
+    -- Re-flatten the heal-prediction/absorb textures after Blizzard's own update
+    -- pass. Hooking the GLOBAL is safe; hooking CompactUnitFrameMixin would copy
+    -- the hooked function as a plain Lua value and taint every secure call
+    -- through it, so never do that. This hook only writes texture + colour — it
+    -- never reads a heal or absorb amount, so nothing here can touch a secret.
+    if type(_G.CompactUnitFrame_UpdateHealPrediction) == "function" then
+        hooksecurefunc("CompactUnitFrame_UpdateHealPrediction", function(frame)
+            if not frame or not skinnedFrames[frame] then return end
+            HP:Apply(frame, frame.healthBar)
+        end)
+    end
 
     -- Hook CompactUnitFrame_SetUnit to catch newly assigned party/raid frames
     hooksecurefunc("CompactUnitFrame_SetUnit", function(frame, unit)

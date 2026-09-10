@@ -7,6 +7,7 @@
 ## SavedVariables: PadleyUI_DB
 
 Core\Constants.lua
+Core\HealPrediction.lua
 Core\Fonts.lua
 Core\SkinEngine.lua
 Core\Config.lua
@@ -40,3 +41,6 @@ PadleyUI.lua
 
 # TEMPORARY diagnostic — /puiprobe. Delete this line and Debug\AuraProbe.lua when done.
 Debug\AuraProbe.lua
+
+# TEMPORARY diagnostic — /puipredict. Delete this line and Debug\PredictionProbe.lua when done.
+Debug\PredictionProbe.lua
