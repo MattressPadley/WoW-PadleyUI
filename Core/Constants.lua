@@ -33,7 +33,7 @@ ns.C = {
     FONT_FLAGS = "OUTLINE",
 
     -- Frame spacing (extra vertical gap between party/raid frames)
-    FRAME_SPACING = 4,
+    FRAME_SPACING = 2,
 
     -- Flat backdrop table (reused everywhere)
     FLAT_BACKDROP = {
