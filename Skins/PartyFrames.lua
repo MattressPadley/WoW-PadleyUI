@@ -69,6 +69,25 @@ local function CreateBarBackdrop(bar)
     return bd
 end
 
+-- Blizzard's own setup (DefaultCompactUnitFrameSetup / DefaultCompactMiniFrameSetup)
+-- ends with `healthBar:GetStatusBarTexture():SetDrawLayer("BORDER")` — the fill is
+-- deliberately BELOW the frame's ARTWORK regions (roleIcon) and below the
+-- BORDER/5 heal-prediction + absorb textures.
+--
+-- SetStatusBarTexture(path) allocates a BRAND NEW texture object, and a fresh
+-- statusbar texture defaults to the StatusBar's drawLayer, i.e. ARTWORK/0. So
+-- every time we (or Blizzard) re-skin the bar, the fill silently jumps above the
+-- role icon and the absorb art and covers them until health drops. Blizzard only
+-- re-pins the layer in the one-shot setup call, never in UpdateAll, so it never
+-- recovers on its own. Re-pin it ourselves after every texture swap.
+local function RestoreFillDrawLayer(bar)
+    if not bar or not bar.GetStatusBarTexture then return end
+    local tex = bar:GetStatusBarTexture()
+    if tex and tex.SetDrawLayer then
+        tex:SetDrawLayer("BORDER")
+    end
+end
+
 local function EnforceFlatTexture(bar)
     if settingTexture[bar] then return end
     local tex = bar:GetStatusBarTexture()
@@ -76,6 +95,21 @@ local function EnforceFlatTexture(bar)
         settingTexture[bar] = true
         bar:SetStatusBarTexture(C.BAR_TEXTURE)
         settingTexture[bar] = nil
+    end
+    RestoreFillDrawLayer(bar)
+end
+
+-- Raise the icons Blizzard draws on the frame itself above the health bar fill.
+-- roleIcon lives on the frame's ARTWORK/0 layer, the same layer a freshly
+-- allocated fill texture lands on, and loses the tie because it was created
+-- first. OVERLAY/7 puts it unambiguously on top regardless of what the bar does.
+-- readyCheckIcon (frameLevel 120) and centerStatusIcon (frameLevel 110) are real
+-- child Frames, already above the bar; CompactUnitFrame has no raid target marker
+-- region of its own (raid markers ride on the nameplate/unit frames instead).
+-- Layer-only writes: no geometry, no anchors, no reads — taint-safe.
+local function RaiseFrameIcons(frame)
+    if frame.roleIcon and frame.roleIcon.SetDrawLayer then
+        frame.roleIcon:SetDrawLayer("OVERLAY", 7)
     end
 end
 
@@ -110,6 +144,7 @@ local function SkinHealthBar(frame)
     if not bar then return end
 
     SE:SkinStatusBar(bar)
+    RestoreFillDrawLayer(bar)
     RemoveBarMasks(bar)
 
     -- Blizzard owns the geometry of the heal-prediction/absorb regions; we only
@@ -145,7 +180,11 @@ local function SkinHealthBar(frame)
         hookedBars[bar] = true
 
         hooksecurefunc(bar, "SetStatusBarTexture", function(self)
+            -- Runs on OUR swap too (EnforceFlatTexture early-returns under the
+            -- recursion guard), which is exactly when the new texture needs
+            -- re-pinning to BORDER.
             EnforceFlatTexture(self)
+            RestoreFillDrawLayer(self)
         end)
 
         hooksecurefunc(bar, "SetStatusBarColor", function(self)
@@ -174,6 +213,7 @@ local function SkinPowerBar(frame)
     if not bar then return end
 
     SE:SkinStatusBar(bar)
+    RestoreFillDrawLayer(bar)
     RemoveBarMasks(bar)
 
     -- Alpha-zero all non-fill texture regions
@@ -205,6 +245,7 @@ local function SkinPowerBar(frame)
 
         hooksecurefunc(bar, "SetStatusBarTexture", function(self)
             EnforceFlatTexture(self)
+            RestoreFillDrawLayer(self)
         end)
 
         hooksecurefunc(bar, "SetStatusBarColor", function(self)
@@ -250,6 +291,10 @@ local function StripChrome(frame)
     end
 
     HP:Apply(frame, frame.healthBar)
+
+    -- Re-applied on every UpdateAll, so a Blizzard re-layout that re-allocates
+    -- the fill texture can never bury the role icon again.
+    RaiseFrameIcons(frame)
 
     -- Ensure the PartyMemberOverlay (leader crown, role, PvP icons) stays visible
     local overlay = frame.PartyMemberOverlay
@@ -352,10 +397,12 @@ local function SkinMemberFrame(frame)
             -- Re-enforce flat textures
             if self.healthBar then
                 EnforceFlatTexture(self.healthBar)
+                RestoreFillDrawLayer(self.healthBar)
                 RemoveBarMasks(self.healthBar)
             end
             if self.powerBar then
                 EnforceFlatTexture(self.powerBar)
+                RestoreFillDrawLayer(self.powerBar)
                 RemoveBarMasks(self.powerBar)
             end
             StripChrome(self)
