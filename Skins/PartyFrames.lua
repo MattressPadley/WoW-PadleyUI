@@ -19,11 +19,13 @@ local settingColor = {}
 
 -- Spacing re-anchor state. CompactRaidFrame*/CompactPartyFrameMember* are
 -- PROTECTED frames — re-anchoring them in combat raises ADDON_ACTION_BLOCKED,
--- so we queue the nudge and flush it on PLAYER_REGEN_ENABLED. spacedOffsets
--- records the offset we last applied per frame so we don't re-nudge (and double
--- the gap) when Blizzard hasn't reset the layout.
-local spacedOffsets = {}
+-- so we queue the re-anchor and flush it on PLAYER_REGEN_ENABLED.
+-- appliedOffsets records both the offset we wrote and the Blizzard offset we
+-- derived it from, so a repeat pass can tell its own output apart from a fresh
+-- Blizzard layout and stay idempotent.
+local appliedOffsets = {}
 local spacingPending = false
+local spacingScheduled = false
 
 ---------------------------------------------------------------------------
 -- Utility
@@ -436,8 +438,195 @@ end
 ---------------------------------------------------------------------------
 -- Spacing
 ---------------------------------------------------------------------------
+-- Blizzard lays compact frames out two different ways (verified against the
+-- 12.1.0.69299 UI source):
+--
+--   * Group frames (CompactPartyFrame, CompactRaidGroup1-8) CHAIN each member
+--     to the previous one. CompactRaidGroup_UpdateLayout() does
+--     Member(i):SetPoint("TOP", Member(i-1), "BOTTOM", 0, yOffset) for vertical
+--     groups and ("LEFT", prev, "RIGHT", 0, 0) for horizontal ones, and
+--     CompactPartyFrameMixin:UpdateLayout() chains the pet frames on the end.
+--
+--   * The raid container is a FlowContainer. FlowContainer_DoLayout() anchors
+--     every object ABSOLUTELY as ("TOPLEFT", container, "TOPLEFT", x, -y) with
+--     x/y accumulated from object sizes — there is no parent-to-child chain to
+--     nudge, and a wrapped grid puts frames at non-zero x AND y at once.
+--
+-- Both cases compute the target offset outright and write it; nothing is ever
+-- added to whatever GetPoint() happens to return. Running a pass twice is a
+-- no-op, and a frame we can't safely read is skipped rather than aborting the
+-- loop (raid slots go in and out of use constantly).
 
-local function ApplySpacing(prefix, count)
+local SPACING_EPSILON = 0.01
+
+local function AnySecret(...)
+    if hasanysecretvalues then
+        return hasanysecretvalues(...)
+    end
+    if issecretvalue then
+        for i = 1, select("#", ...) do
+            if issecretvalue((select(i, ...))) then return true end
+        end
+    end
+    return false
+end
+
+-- Read anchor 1. Returns nil if the frame has no point, or if anything about
+-- the anchor is a secret value (we must never compare or do maths on those).
+local function ReadPoint(frame)
+    if not frame or not frame.GetPoint then return nil end
+    local ok, point, rel, relPoint, x, y = pcall(frame.GetPoint, frame, 1)
+    if not ok or not point then return nil end
+    if AnySecret(point, rel, relPoint, x, y) then return nil end
+    if type(x) ~= "number" or type(y) ~= "number" then return nil end
+    return point, rel, relPoint, x, y
+end
+
+local function SameOffset(a, b)
+    return math.abs(a - b) < SPACING_EPSILON
+end
+
+-- If we already wrote this exact anchor, recover the Blizzard offset it came
+-- from; otherwise the current offset IS the Blizzard offset.
+local function GetBaseOffset(frame, point, rel, relPoint, x, y)
+    local applied = appliedOffsets[frame]
+    if applied and applied.point == point and applied.rel == rel
+        and applied.relPoint == relPoint
+        and SameOffset(applied.x, x) and SameOffset(applied.y, y) then
+        return applied.baseX, applied.baseY
+    end
+    return x, y
+end
+
+local function StoreOffset(frame, point, rel, relPoint, x, y, baseX, baseY)
+    appliedOffsets[frame] = {
+        point = point, rel = rel, relPoint = relPoint,
+        x = x, y = y, baseX = baseX, baseY = baseY,
+    }
+end
+
+-- Which way does this anchor push the frame away from its neighbour? Both axes
+-- are resolved together, so a diagonal anchor (e.g. TOPLEFT -> BOTTOMRIGHT)
+-- gets both offsets rather than being skipped.
+local function AxisDelta(point, relPoint, spacing)
+    local dx, dy = 0, 0
+    if point:find("TOP") and relPoint:find("BOTTOM") then
+        dy = -spacing
+    elseif point:find("BOTTOM") and relPoint:find("TOP") then
+        dy = spacing
+    end
+    if point:find("LEFT") and relPoint:find("RIGHT") then
+        dx = spacing
+    elseif point:find("RIGHT") and relPoint:find("LEFT") then
+        dx = -spacing
+    end
+    return dx, dy
+end
+
+-- Chained layouts: each frame keeps its own anchor, we just widen the link.
+-- The first member anchors to its group's own TOP/TOPLEFT, so AxisDelta returns
+-- zero for it and it stays put — the group keeps its position.
+local function SpaceChainedFrames(frames)
+    if type(frames) ~= "table" then return end
+
+    for i = 1, #frames do
+        local frame = frames[i]
+        local point, rel, relPoint, x, y = ReadPoint(frame)
+        if point and rel then
+            local baseX, baseY = GetBaseOffset(frame, point, rel, relPoint, x, y)
+            local dx, dy = AxisDelta(point, relPoint, C.FRAME_SPACING)
+            local nx, ny = baseX + dx, baseY + dy
+
+            if not (SameOffset(nx, x) and SameOffset(ny, y)) then
+                frame:ClearAllPoints()
+                frame:SetPoint(point, rel, relPoint, nx, ny)
+            end
+            StoreOffset(frame, point, rel, relPoint, nx, ny, baseX, baseY)
+        end
+    end
+end
+
+-- Rank a set of coordinates into 0-based grid indices. Blizzard's flow offsets
+-- are exact multiples of the object sizes, so equal coordinates share an index;
+-- the 1px tolerance just absorbs fractional frame widths.
+local function RankKey(value)
+    return string.format("%.1f", value)
+end
+
+local function BuildRankLookup(values, descending)
+    table.sort(values, function(a, b)
+        if descending then return a > b end
+        return a < b
+    end)
+
+    local lookup, rank, prev = {}, 0, nil
+    for _, v in ipairs(values) do
+        if prev and math.abs(v - prev) > 1 then
+            rank = rank + 1
+        end
+        lookup[RankKey(v)] = rank
+        prev = v
+    end
+    return lookup
+end
+
+local function IsFlowChild(frame)
+    if not frame or not frame.GetName then return false end
+    local ok, name = pcall(frame.GetName, frame)
+    if not ok or not name then return false end
+    if not (name:find("^CompactRaidFrame%d+$") or name:find("^CompactRaidGroup%d+$")) then
+        return false
+    end
+    -- Hidden frames keep stale anchors; including them would invent grid rows.
+    local shown
+    ok, shown = pcall(frame.IsShown, frame)
+    if not ok or AnySecret(shown) then return false end
+    return shown and true or false
+end
+
+-- FlowContainer layout: derive each frame's column/row from its position in the
+-- grid and set the absolute offset for that cell. Empty/unused slots are simply
+-- absent from the list instead of terminating the scan.
+local function SpaceFlowContainer(container)
+    if not container or not container.GetChildren then return end
+
+    local entries, xs, ys = {}, {}, {}
+    for _, child in ipairs({ container:GetChildren() }) do
+        if IsFlowChild(child) then
+            local point, rel, relPoint, x, y = ReadPoint(child)
+            if point == "TOPLEFT" and rel == container and relPoint == "TOPLEFT" then
+                local baseX, baseY = GetBaseOffset(child, point, rel, relPoint, x, y)
+                entries[#entries + 1] = {
+                    frame = child, point = point, rel = rel, relPoint = relPoint,
+                    x = x, y = y, baseX = baseX, baseY = baseY,
+                }
+                xs[#xs + 1] = baseX
+                ys[#ys + 1] = baseY
+            end
+        end
+    end
+    if #entries == 0 then return end
+
+    -- Columns run left to right (x ascending); rows run top to bottom, and the
+    -- flow's y offsets are negative going down, so rank y descending.
+    local colRank = BuildRankLookup(xs, false)
+    local rowRank = BuildRankLookup(ys, true)
+
+    for _, e in ipairs(entries) do
+        local col = colRank[RankKey(e.baseX)] or 0
+        local row = rowRank[RankKey(e.baseY)] or 0
+        local nx = e.baseX + col * C.FRAME_SPACING
+        local ny = e.baseY - row * C.FRAME_SPACING
+
+        if not (SameOffset(nx, e.x) and SameOffset(ny, e.y)) then
+            e.frame:ClearAllPoints()
+            e.frame:SetPoint(e.point, e.rel, e.relPoint, nx, ny)
+        end
+        StoreOffset(e.frame, e.point, e.rel, e.relPoint, nx, ny, e.baseX, e.baseY)
+    end
+end
+
+local function ApplySpacing()
     -- Never re-anchor protected raid/party frames during combat — every
     -- ClearAllPoints/SetPoint is blocked (ADDON_ACTION_BLOCKED). Queue it and
     -- flush once combat ends (PLAYER_REGEN_ENABLED).
@@ -445,41 +634,68 @@ local function ApplySpacing(prefix, count)
         spacingPending = true
         return
     end
+    spacingPending = false
 
-    for i = 2, count do
-        local frame = _G[prefix .. i]
-        if not frame then break end
-        local point, rel, relPoint, x, y = frame:GetPoint()
-        if not point then break end
+    if CompactPartyFrame then
+        SpaceChainedFrames(CompactPartyFrame.memberUnitFrames)
+        SpaceChainedFrames(CompactPartyFrame.petUnitFrames)
+    end
 
-        -- Idempotent: if the frame is already at the offset we last applied,
-        -- Blizzard hasn't reset the layout, so skip it. This avoids re-adding
-        -- FRAME_SPACING every roster tick (which would compound the gap and
-        -- thrash the layout).
-        local last = spacedOffsets[frame]
-        if not (last and last.point == point and last.rel == rel
-                and last.relPoint == relPoint and last.x == x and last.y == y) then
-            -- Determine axis from the anchor and nudge the offset
-            local isVertical = (y ~= 0 and x == 0)
-            local isHorizontal = (x ~= 0 and y == 0)
-            local nx, ny = x, y
-
-            if isVertical then
-                local sign = y < 0 and -1 or 1
-                ny = y + sign * C.FRAME_SPACING
-            elseif isHorizontal then
-                local sign = x < 0 and -1 or 1
-                nx = x + sign * C.FRAME_SPACING
-            end
-
-            if nx ~= x or ny ~= y then
-                frame:ClearAllPoints()
-                frame:SetPoint(point, rel, relPoint, nx, ny)
-                spacedOffsets[frame] = {
-                    point = point, rel = rel, relPoint = relPoint, x = nx, y = ny,
-                }
-            end
+    -- "Keep Groups Together" (discrete mode) builds CompactRaidGroup1-8, each
+    -- its own chained group inside the flow container.
+    for i = 1, (MAX_RAID_GROUPS or 8) do
+        local group = _G["CompactRaidGroup" .. i]
+        if group then
+            SpaceChainedFrames(group.memberUnitFrames)
         end
+    end
+
+    SpaceFlowContainer(CompactRaidFrameContainer)
+end
+
+-- Coalesce the layout hooks: Blizzard fires several layout passes per update,
+-- and the hooks run inside secure execution, so defer the re-anchor to the next
+-- frame rather than moving frames mid-Refresh.
+local function QueueSpacing()
+    if spacingScheduled then return end
+    spacingScheduled = true
+    C_Timer.After(0, function()
+        spacingScheduled = false
+        ApplySpacing()
+    end)
+end
+
+-- Blizzard relayouts on far more triggers than the roster/combat events we
+-- listen to (Edit Mode toggles, sort changes, Keep Groups Together, border
+-- toggles), which is why the spacing used to drift and then heal itself. Hook
+-- the layout functions so we re-apply after every Blizzard pass.
+--
+-- CompactRaidGroup_UpdateLayout is a GLOBAL (safe to hook by name) and covers
+-- CompactPartyFrame plus every CompactRaidGroupN. LayoutFrames/UpdateLayout are
+-- hooked on the INSTANCE — never on CompactRaidFrameContainerMixin or
+-- CompactPartyFrameMixin, since Mixin() would copy the hooked function as a
+-- plain Lua value and taint every secure call through it.
+local layoutHooked = {}
+
+local function InstallLayoutHooks()
+    if not layoutHooked.group and type(_G.CompactRaidGroup_UpdateLayout) == "function" then
+        layoutHooked.group = true
+        hooksecurefunc("CompactRaidGroup_UpdateLayout", QueueSpacing)
+    end
+    if not layoutHooked.party and CompactPartyFrame and CompactPartyFrame.UpdateLayout then
+        layoutHooked.party = true
+        hooksecurefunc(CompactPartyFrame, "UpdateLayout", QueueSpacing)
+    end
+    if not layoutHooked.container and CompactRaidFrameContainer and CompactRaidFrameContainer.LayoutFrames then
+        layoutHooked.container = true
+        hooksecurefunc(CompactRaidFrameContainer, "LayoutFrames", QueueSpacing)
+    end
+    -- EditModeManagerFrame:UpdateRaidContainerFlow() reaches FlowContainer_DoLayout
+    -- without going through LayoutFrames, so cover the global too. It fires once
+    -- per added object, but QueueSpacing collapses a burst into one pass.
+    if not layoutHooked.flow and type(_G.FlowContainer_DoLayout) == "function" then
+        layoutHooked.flow = true
+        hooksecurefunc("FlowContainer_DoLayout", QueueSpacing)
     end
 end
 
@@ -495,7 +711,6 @@ local function ScanPartyFrames()
             RefreshColors(frame)
         end
     end
-    ApplySpacing("CompactPartyFrameMember", 5)
 end
 
 local function ScanRaidFrames()
@@ -506,7 +721,6 @@ local function ScanRaidFrames()
             RefreshColors(frame)
         end
     end
-    ApplySpacing("CompactRaidFrame", 40)
 end
 
 ---------------------------------------------------------------------------
@@ -568,18 +782,17 @@ function PartyFrameSkin:Apply()
         if event == "GROUP_ROSTER_UPDATE" or event == "PLAYER_ENTERING_WORLD" then
             -- Defer to next frame so Blizzard has time to create/assign frames
             C_Timer.After(0, function()
+                InstallLayoutHooks()
                 ScanPartyFrames()
                 ScanRaidFrames()
                 HideTitles()
+                ApplySpacing()
             end)
         elseif event == "PLAYER_REGEN_ENABLED" then
             -- Combat ended: flush any spacing re-anchor that was blocked in combat.
             if spacingPending then
                 spacingPending = false
-                C_Timer.After(0, function()
-                    ApplySpacing("CompactPartyFrameMember", 5)
-                    ApplySpacing("CompactRaidFrame", 40)
-                end)
+                QueueSpacing()
             end
         elseif event == "UNIT_DISPLAYPOWER" then
             -- Refresh power color when power type changes
@@ -609,6 +822,8 @@ function PartyFrameSkin:Apply()
     end)
 
     -- Skin any frames already visible
+    InstallLayoutHooks()
     ScanPartyFrames()
     ScanRaidFrames()
+    ApplySpacing()
 end
