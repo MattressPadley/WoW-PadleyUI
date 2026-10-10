@@ -1,0 +1,24 @@
+## Interface: 16001
+## Title: PadleyUI (Forever probe)
+## Notes: TEMPORARY - capability probe for the WoW Forever port. No skins load.
+## Author: Padley
+## Version: @project-version@
+## X-PadleyUI-TOC: Forever
+## OptionalDeps: Blizzard_DamageMeter, Blizzard_UIPanels_Game, BetterBags, Blizzard_ObjectiveTracker, Blizzard_TokenUI, Blizzard_Professions, Blizzard_ProfessionsBook, Blizzard_Collections, Blizzard_GroupFinder, Blizzard_EncounterJournal, Blizzard_WorldMap
+## SavedVariables: PadleyUI_DB
+
+# Forever client (game type "camelot", TOC-suffix alias "Forever"). The retail
+# client is game type "standard" and never reads this file; it keeps loading
+# PadleyUI.toc. Do NOT rename this to _Mainline: that family suffix would also
+# be picked up by retail, ahead of the unsuffixed PadleyUI.toc.
+#
+# OptionalDeps mirror PadleyUI.toc so the probe sees the same load order the
+# retail skins would.
+#
+# Core\Fonts.lua is deliberately excluded: it is not inert (it rewrites
+# STANDARD_TEXT_FONT and SetFont()s every global Font object at load).
+
+Core\Constants.lua
+
+# TEMPORARY diagnostic — /puiforever, writes PadleyUI_DB.foreverProbe.
+Debug\ForeverProbe.lua

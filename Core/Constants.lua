@@ -1,5 +1,11 @@
 local _, ns = ...
 
+-- Running client flavour: "retail" | "forever". Keyed off the interface number,
+-- not WOW_PROJECT_ID — Forever beta builds have reported both 1 (Mainline) and
+-- 18 for the project ID, while its interface is 1.60.x => 16xxx.
+ns.INTERFACE = select(4, GetBuildInfo())
+ns.FLAVOR = (ns.INTERFACE >= 16000 and ns.INTERFACE < 20000) and "forever" or "retail"
+
 -- PadleyUI shared constants
 ns.C = {
     -- Backdrop
