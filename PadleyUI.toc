@@ -44,3 +44,6 @@ Debug\AuraProbe.lua
 
 # TEMPORARY diagnostic — /puipredict. Delete this line and Debug\PredictionProbe.lua when done.
 Debug\PredictionProbe.lua
+
+# TEMPORARY diagnostic — /puiforever (retail baseline for the Forever port). Delete this line and Debug\ForeverProbe.lua when done.
+Debug\ForeverProbe.lua

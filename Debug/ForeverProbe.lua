@@ -8,18 +8,37 @@
 -- unit-frame lineage? nameplate structure? ObjectiveTracker kind? Secret
 -- Values era?).
 --
--- Loaded ONLY by PadleyUI_Forever.toc. Never by PadleyUI.toc (retail).
+-- Loaded by PadleyUI_Forever.toc (Forever) AND, as a TEMP line, by
+-- PadleyUI.toc (retail) — the retail run is the baseline that separates
+-- "missing on both" (pre-existing defensive fallback) from "missing only on
+-- Forever" (real port work). Must not assume any Forever-only API.
 --
--- PRIMARY OUTPUT: PadleyUI_DB.foreverProbe (SavedVariables). The probe runs
--- automatically at PLAYER_LOGIN; /reload or logout flushes it to
---   WTF\Account\<ACCOUNT>\SavedVariables\PadleyUI.lua
+-- PRIMARY OUTPUT: PadleyUI_DB.foreverProbe (SavedVariables). /reload or
+-- logout flushes it to WTF\Account\<ACCOUNT>\SavedVariables\PadleyUI.lua.
 -- Read that file directly. Chat output is a secondary, paginated summary.
 --
--- Slash command: /puiforever          — summary page 1 (/puiforever 2 ...)
---                /puiforever run      — re-probe now (e.g. after targeting a mob)
+-- Schema 2 layout — every run lands under its own key, so no run can destroy
+-- another (a /reload's login run used to overwrite a `full` run before it
+-- reached disk):
+--   foreverProbe.schema   = 2
+--   foreverProbe.latest   = name of the most recently written run
+--   foreverProbe.runs.login     — automatic, every PLAYER_LOGIN
+--   foreverProbe.runs.manual    — /puiforever run
+--   foreverProbe.runs.full      — /puiforever full (on-demand addons loaded)
+--   foreverProbe.runs.plate     — /puiforever plate (manual nameplate capture)
+--   foreverProbe.runs.plateAuto — first NAME_PLATE_UNIT_ADDED of a session
+--   foreverProbe.runs.legacy    — a schema-1 table found on disk, kept as-is
+-- login/manual/full runs keep the schema-1 shape (schema, mode, time, errors,
+-- build, addons, secrets, editMode, unitFrames, objectiveTracker, damageMeter,
+-- nameplates, skins[, loadAttempts]). Plate runs are
+-- { schema, mode, time, flavor, nameplate = <capture> }.
+--
+-- Slash command: /puiforever          — summary of the latest run (/puiforever 2 ...)
+--                /puiforever run      — re-probe now -> runs.manual
 --                /puiforever full     — LoadAddOn every on-demand Blizzard addon
---                                       the retail skins depend on, then re-probe
---                /puiforever plate    — capture target nameplate structure
+--                                       the skins depend on, then re-probe -> runs.full
+--                /puiforever plate    — capture target nameplate -> runs.plate
+--                /puiforever show <login|manual|full> — summary of that run
 --
 -- READ-ONLY toward Blizzard frames: never calls SetAlpha/SetPoint/Show/Hide on
 -- them, never hooks them, never reparents, never writes a key onto them. It
@@ -36,7 +55,7 @@
 
 local addonName, ns = ...
 
-local SCHEMA    = 1
+local SCHEMA    = 2
 local PAGE_SIZE = 55
 local LINE_CAP  = 230  -- chat cuts off at 255
 
@@ -415,7 +434,8 @@ local function ProbeBuild()
     -- Every WOW_PROJECT_* constant, and which ones equal WOW_PROJECT_ID.
     b.projectConstants, b.projectMatches = {}, {}
     for k, v in pairs(_G) do
-        if type(k) == "string" and k:find("^WOW_PROJECT_") and type(v) == "number" then
+        if type(k) == "string" and k:find("^WOW_PROJECT_") and type(v) == "number"
+            and not IsSecret(v) then
             b.projectConstants[k] = v
             if v == WOW_PROJECT_ID and k ~= "WOW_PROJECT_ID" then
                 b.projectMatches[#b.projectMatches + 1] = k
@@ -746,7 +766,25 @@ end
 
 local livePlate  -- survives re-runs within a session
 
-local function RunProbe(mode)
+-- Returns the schema-2 root, migrating (not discarding) a schema-1 table.
+local function ProbeDB()
+    PadleyUI_DB = PadleyUI_DB or {}
+    local db = PadleyUI_DB.foreverProbe
+    if type(db) ~= "table" or db.schema ~= SCHEMA or type(db.runs) ~= "table" then
+        local legacy = (type(db) == "table" and db.schema ~= SCHEMA) and db or nil
+        db = { schema = SCHEMA, runs = { legacy = legacy } }
+        PadleyUI_DB.foreverProbe = db
+    end
+    return db
+end
+
+local function StoreRun(name, run)
+    local db = ProbeDB()
+    db.runs[name] = run
+    db.latest = name
+end
+
+local function RunProbe(mode, extra)
     local result = { schema = SCHEMA, mode = mode, time = time(), errors = {} }
     local function step(key, fn, ...)
         local ok, v = pcall(fn, ...)
@@ -766,9 +804,11 @@ local function RunProbe(mode)
     step("nameplates", ProbeNameplates)
     if result.nameplates then result.nameplates.live = livePlate end
     step("skins", ProbeSkins, result.addons or {})
+    if extra then
+        for k, v in pairs(extra) do result[k] = v end
+    end
 
-    PadleyUI_DB = PadleyUI_DB or {}
-    PadleyUI_DB.foreverProbe = result
+    StoreRun(mode, result)
     return result
 end
 
@@ -779,8 +819,8 @@ local function CaptureLivePlate(unit, source)
     local okCap, p = pcall(CapturePlate, plate, unit, source)
     if not okCap then return false end
     livePlate = p
-    local db = PadleyUI_DB and PadleyUI_DB.foreverProbe
-    if db and db.nameplates then db.nameplates.live = p end
+    StoreRun(source == "auto" and "plateAuto" or "plate",
+        { schema = SCHEMA, mode = source, time = time(), flavor = ns.FLAVOR, nameplate = p })
     return true
 end
 
@@ -794,8 +834,12 @@ local function Emit(s)
     out[#out + 1] = s
 end
 
-local function BuildSummary(r)
+local function BuildSummary(r, db)
     out = {}
+    if not r then
+        Emit("no probe run stored yet — /puiforever run")
+        return
+    end
     local b = r.build or {}
     Emit(string.format("=== PadleyUI Forever probe (schema %d, mode %s) ===",
         r.schema or 0, tostring(r.mode)))
@@ -809,6 +853,10 @@ local function BuildSummary(r)
     Emit("objectiveTracker: " .. tostring(r.objectiveTracker and r.objectiveTracker.verdict) ..
         "  damageMeter: " .. tostring(r.damageMeter and r.damageMeter.verdict))
     local live = r.nameplates and r.nameplates.live
+    if not live and db then
+        local pr = db.runs.plate or db.runs.plateAuto
+        live = pr and pr.nameplate
+    end
     if live then
         local f = live.fields
         Emit(string.format("nameplate(%s): castBar=%s CastBar=%s AurasFrame=%s healthBar=%s bars=%s cds=%s",
@@ -837,7 +885,15 @@ local function BuildSummary(r)
         Emit("== probe errors ==")
         for _, e in ipairs(r.errors) do Emit("  " .. e) end
     end
-    Emit("Full data: PadleyUI_DB.foreverProbe — /reload to flush to SavedVariables.")
+    if db then
+        local names = {}
+        for k, v in pairs(db.runs) do
+            names[#names + 1] = k .. "@" .. tostring(type(v) == "table" and v.time or "?")
+        end
+        table.sort(names)
+        Emit("stored runs: " .. table.concat(names, "  "))
+    end
+    Emit("Full data: PadleyUI_DB.foreverProbe.runs — /reload to flush to SavedVariables.")
 end
 
 local function PrintPage(page)
@@ -871,7 +927,7 @@ events:SetScript("OnEvent", function(self, event, unit)
     if event == "PLAYER_LOGIN" then
         local ok, err = pcall(RunProbe, "login")
         if ok then
-            print("|cff66ccffPadleyUI|r Forever probe written to PadleyUI_DB.foreverProbe " ..
+            print("|cff66ccffPadleyUI|r probe written to PadleyUI_DB.foreverProbe.runs.login " ..
                   "(flavor=" .. tostring(ns.FLAVOR) .. "). /puiforever for a summary.")
         else
             print("|cffff5555PadleyUI Forever probe error:|r " .. tostring(err))
@@ -887,8 +943,13 @@ SLASH_PUIFOREVER1 = "/puiforever"
 SlashCmdList["PUIFOREVER"] = function(msg)
     msg = (msg or ""):lower()
     local ok, err = pcall(function()
-        local r = PadleyUI_DB and PadleyUI_DB.foreverProbe
-        if msg:find("full", 1, true) then
+        local db = ProbeDB()
+        local r = db.latest and db.runs[db.latest]
+        local shown = msg:match("^%s*show%s+(%a+)")
+        if shown then
+            r = db.runs[shown]
+            if not r then print("|cff66ccffPUIFOREVER|r no stored run '" .. shown .. "'") end
+        elseif msg:find("full", 1, true) then
             local loaded = {}
             for _, name in ipairs(ON_DEMAND) do
                 if C_AddOns and C_AddOns.LoadAddOn
@@ -897,8 +958,7 @@ SlashCmdList["PUIFOREVER"] = function(msg)
                     loaded[#loaded + 1] = name .. "=" .. tostring(okL and did)
                 end
             end
-            r = RunProbe("full")
-            r.loadAttempts = loaded
+            r = RunProbe("full", { loadAttempts = loaded })
         elseif msg:find("plate", 1, true) then
             local got = CaptureLivePlate("target", "manual")
             if not got and C_NamePlate and C_NamePlate.GetNamePlates then
@@ -908,11 +968,13 @@ SlashCmdList["PUIFOREVER"] = function(msg)
                 if u then got = CaptureLivePlate(u, "manual-first") end
             end
             print("|cff66ccffPUIFOREVER|r nameplate capture: " .. tostring(got))
-            r = PadleyUI_DB and PadleyUI_DB.foreverProbe
-        elseif msg:find("run", 1, true) or not r then
+            r = db.runs.full or db.runs.manual or db.runs.login
+        elseif msg:find("run", 1, true) then
             r = RunProbe("manual")
         end
-        BuildSummary(r)
+        -- "latest" may be a plate capture; show the newest inventory run.
+        if r and r.nameplate then r = db.runs.full or db.runs.manual or db.runs.login end
+        BuildSummary(r, db)
         PrintPage(tonumber(msg:match("%d+")))
     end)
     if not ok then
