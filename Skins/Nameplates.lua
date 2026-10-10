@@ -55,7 +55,8 @@ local threatOverrides = {}  -- unitFrame → { r, g, b } or nil
 local function GetThreatColor(unit)
     local status = UnitThreatSituation("player", unit)
     if status == nil then return nil end  -- not on threat table (e.g. neutral/unpulled)
-    local spec = GetSpecialization()
+    -- GetSpecialization is absent on Forever (no specs); no spec => DPS colours.
+    local spec = GetSpecialization and GetSpecialization()
     local isTank = spec and GetSpecializationRole(spec) == "TANK"
     local colors = isTank and THREAT_TANK or THREAT_DPS
     return colors[status]
@@ -703,8 +704,8 @@ local function FindIconTexture(button)
 end
 
 local function StripMasks(tex)
-    if not tex or not tex.GetMaskTextures then return end
-    local ok, masks = pcall(function() return { tex:GetMaskTextures() } end)
+    if not tex then return end
+    local ok, masks = pcall(SE.GetMaskTextures, SE, tex)
     if not ok then return end
     for _, mask in ipairs(masks) do
         TryWrite("icon mask remove", tex.RemoveMaskTexture, tex, mask)
@@ -831,6 +832,11 @@ end
 -- after the event that told us the unit's auras changed.
 local function ScheduleAuraSweep(unitFrame)
     if not unitFrame then return end
+    -- Forever: skipped. Its plates carry a real aura container
+    -- (UnitFrame.AurasFrame -> BuffListFrame / DebuffListFrame) instead of the
+    -- flat buttons this sweep was built for; the per-flavour rework is a
+    -- separate, unauthorised phase. Blizzard's auras show unstyled there.
+    if ns.FLAVOR == "forever" then return end
     SweepAuraButtons(unitFrame)
     if pendingAuraSweeps[unitFrame] then return end
     pendingAuraSweeps[unitFrame] = true

@@ -643,6 +643,9 @@ end
 -- Apply
 ---------------------------------------------------------------------------
 
+-- Forever: skipped. Its ProfessionsFrame has no TabSystem / SpecPage /
+-- OrdersPage (probe, build 70338).
 function ProfessionsSkin:Apply()
+    if ns.FLAVOR == "forever" then return end
     SkinMainFrame()
 end

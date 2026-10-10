@@ -1,6 +1,6 @@
 ## Interface: 16001
-## Title: PadleyUI (Forever probe)
-## Notes: TEMPORARY - capability probe for the WoW Forever port. No skins load.
+## Title: PadleyUI
+## Notes: A custom UI addon by Padley - skins built-in Blizzard frames
 ## Author: Padley
 ## Version: @project-version@
 ## X-PadleyUI-TOC: Camelot
@@ -13,22 +13,58 @@
 # PadleyUI_Camelot.toc. The documented "_Forever" alias was NOT honoured - with
 # only PadleyUI_Forever.toc present the addon vanished from the addon list.
 # Keep both files with distinct X-PadleyUI-TOC values; the probe records the
-# one actually read as build.tocVariant.
+# one actually read as build.tocVariant. Keep their file lists identical.
 #
 # Retail (game type "standard") reads neither file and keeps using PadleyUI.toc.
 # Do NOT add a _Mainline.toc: that family suffix would also be picked up by
 # retail, ahead of the unsuffixed PadleyUI.toc.
 #
 # HAZARD: if no suffixed TOC matches the client's game type, WoW falls back to
-# the unsuffixed PadleyUI.toc and loads every retail skin into Forever.
+# the unsuffixed PadleyUI.toc (Interface 120100).
 #
-# OptionalDeps mirror PadleyUI.toc so the probe sees the same load order the
-# retail skins would.
-#
-# Core\Fonts.lua is deliberately excluded: it is not inert (it rewrites
-# STANDARD_TEXT_FONT and SetFont()s every global Font object at load).
+# File list is identical to PadleyUI.toc's (TEMP probes included - they are
+# read-only slash commands). Forever-specific behaviour hangs off ns.FLAVOR
+# (Core\Constants.lua); skins that cannot work on Forever skip themselves
+# inside Apply().
 
 Core\Constants.lua
+Core\RestoredRegions.lua
+Core\Fonts.lua
+Core\SkinEngine.lua
+Core\Config.lua
+Core\Movers.lua
+Skins\DamageMeter.lua
+Skins\Tooltip.lua
+Skins\Loot.lua
+Skins\GameMenu.lua
+Skins\Chat.lua
+Skins\StatusBar.lua
+Skins\Minimap.lua
+Skins\ActionBars.lua
+Skins\CooldownTracker.lua
+Skins\Nameplates.lua
+Skins\CastBar.lua
+Skins\GCDBar.lua
+Skins\Items.lua
+Skins\CharacterFrame.lua
+Skins\UnitFrames.lua
+Skins\ClassPower.lua
+Skins\PartyFrames.lua
+Skins\MirrorTimer.lua
+Skins\BetterBags.lua
+Skins\ObjectiveTracker.lua
+Skins\Professions.lua
+Skins\WorldMap.lua
+Skins\ChatBubbles.lua
+Skins\TimerTracker.lua
+Skins\EncounterBar.lua
+PadleyUI.lua
 
-# TEMPORARY diagnostic — /puiforever, writes PadleyUI_DB.foreverProbe.
+# TEMPORARY diagnostic — /puiprobe. Delete this line and Debug\AuraProbe.lua when done.
+Debug\AuraProbe.lua
+
+# TEMPORARY diagnostic — /puipredict. Delete this line and Debug\PredictionProbe.lua when done.
+Debug\PredictionProbe.lua
+
+# TEMPORARY diagnostic — /puiforever (retail baseline for the Forever port). Delete this line and Debug\ForeverProbe.lua when done.
 Debug\ForeverProbe.lua

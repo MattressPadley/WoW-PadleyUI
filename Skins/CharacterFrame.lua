@@ -418,10 +418,15 @@ end
 -- Apply
 ---------------------------------------------------------------------------
 
+-- Forever: skipped. Its CharacterFrame has no CharacterFrameTab1 (probe,
+-- build 70338), and the currency list lives inside that window, so both stay
+-- Blizzard-default there rather than half-skinned.
 function CharacterFrameSkin:Apply()
+    if ns.FLAVOR == "forever" then return end
     SkinCharacterFrame()
 end
 
 function CharacterFrameSkin:ApplyTokenFrame()
+    if ns.FLAVOR == "forever" then return end
     SkinTokenFrame()
 end

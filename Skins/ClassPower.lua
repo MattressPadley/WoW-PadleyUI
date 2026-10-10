@@ -315,6 +315,10 @@ end
 ---------------------------------------------------------------------------
 
 function ClassPowerSkin:Apply()
+    -- Forever: skipped. Classic content has no specs (GetSpecialization is
+    -- absent) and none of the retail class power bar frames.
+    if ns.FLAVOR == "forever" then return end
+
     -- Skip classes without a secondary resource entirely
     if not CLASS_POWER_MAP[playerClass] then return end
 

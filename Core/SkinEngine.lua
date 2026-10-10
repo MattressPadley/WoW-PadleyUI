@@ -26,6 +26,27 @@ function SkinEngine:StripTextures(frame, kill)
     end
 end
 
+--- Every mask texture attached to a texture, as a list.
+--- Uses Texture:GetMaskTextures() where it exists (retail). Forever build 70338
+--- lacks it, so fall back to the indexed GetNumMaskTextures/GetMaskTexture pair
+--- when that is present; otherwise return an empty list.
+--- @param tex table The texture
+--- @return table masks
+function SkinEngine:GetMaskTextures(tex)
+    if not tex then return {} end
+    if tex.GetMaskTextures then
+        return { tex:GetMaskTextures() }
+    end
+    local masks = {}
+    if tex.GetNumMaskTextures and tex.GetMaskTexture then
+        for i = 1, tex:GetNumMaskTextures() do
+            local mask = tex:GetMaskTexture(i)
+            if mask then masks[#masks + 1] = mask end
+        end
+    end
+    return masks
+end
+
 --- Apply a flat (fill-only) backdrop to a frame.
 --- Uses a plain BACKGROUND texture + SetColorTexture rather than SetBackdrop, so
 --- it is safe on ANY frame — including Blizzard frames whose width is a secret

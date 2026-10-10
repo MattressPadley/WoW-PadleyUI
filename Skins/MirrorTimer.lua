@@ -71,11 +71,15 @@ function MirrorTimerSkin:Apply()
     if not MirrorTimerContainer then return end
 
     -- Pre-skin all three timer frames
-    for _, bar in ipairs(MirrorTimerContainer.mirrorTimers) do
+    for _, bar in ipairs(MirrorTimerContainer.mirrorTimers or {}) do
         SkinMirrorBar(bar)
     end
 
     -- Apply color and ensure skinned on each timer activation
+    if type(MirrorTimerContainer.SetupTimer) ~= "function"
+        or type(MirrorTimerContainer.GetAvailableTimer) ~= "function" then
+        return
+    end
     hooksecurefunc(MirrorTimerContainer, "SetupTimer", function(self, timer)
         local bar = self:GetAvailableTimer(timer)
         if bar then

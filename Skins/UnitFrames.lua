@@ -17,6 +17,14 @@ local powerBarUnits = {}
 -- Tracked bars for dynamic resizing from config
 local trackedBars = {}
 
+-- hooksecurefunc on an instance method only when it exists, so a client
+-- without it (another flavour) skips the hook instead of erroring at load.
+local function HookIfPresent(obj, method, fn)
+    if obj and type(obj[method]) == "function" then
+        hooksecurefunc(obj, method, fn)
+    end
+end
+
 -- Guard against recursive hook calls
 local settingTexture = {}
 local settingColor = {}
@@ -215,8 +223,8 @@ end
 local strippedMasks = {}
 
 local function RemoveMasksFromTexture(tex)
-    if not tex or not tex.RemoveMaskTexture or not tex.GetMaskTextures then return end
-    local masks = {tex:GetMaskTextures()}
+    if not tex or not tex.RemoveMaskTexture then return end
+    local masks = SE:GetMaskTextures(tex)
     for _, mask in ipairs(masks) do
         tex:RemoveMaskTexture(mask)
         mask:Hide()
@@ -718,7 +726,7 @@ local function SkinTargetFrame()
     UpdateLevelText("target")
 
     -- Hook CheckClassification — fires every target change
-    hooksecurefunc(frame, "CheckClassification", function(self)
+    HookIfPresent(frame, "CheckClassification", function(self)
         -- Re-hide container art (Blizzard resets alpha on classification change)
         if container then
             container:SetAlpha(0)
@@ -904,7 +912,7 @@ local function SkinFocusFrame()
     UpdateLevelText("focus")
 
     -- Hook CheckClassification — fires every focus change
-    hooksecurefunc(frame, "CheckClassification", function(self)
+    HookIfPresent(frame, "CheckClassification", function(self)
         -- Re-hide container art
         if container then
             container:SetAlpha(0)
@@ -1156,13 +1164,15 @@ function UnitFrameSkin:Apply()
 
     -- Global hook: fires AFTER Blizzard's full health bar update (including color reset)
     -- This catches lockColor/desaturated/vertex-color recoloring that bypasses SetStatusBarColor
-    hooksecurefunc("UnitFrameHealthBar_Update", function(statusbar)
-        if frameUnits[statusbar] then
-            ApplyHealthColor(statusbar)
-            EnforceFlatTexture(statusbar)
-            HP:Apply(statusbar, statusbar:GetParent())
-        end
-    end)
+    if type(_G.UnitFrameHealthBar_Update) == "function" then
+        hooksecurefunc("UnitFrameHealthBar_Update", function(statusbar)
+            if frameUnits[statusbar] then
+                ApplyHealthColor(statusbar)
+                EnforceFlatTexture(statusbar)
+                HP:Apply(statusbar, statusbar:GetParent())
+            end
+        end)
+    end
 
     -- Re-flatten heal prediction / absorb after Blizzard's own update pass.
     -- Hooking the global is safe; hooking the mixin table is not. This writes

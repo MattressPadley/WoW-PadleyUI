@@ -127,8 +127,8 @@ local function RaiseFrameIcons(frame)
 end
 
 local function RemoveMasksFromTexture(tex)
-    if not tex or not tex.RemoveMaskTexture or not tex.GetMaskTextures then return end
-    local masks = { tex:GetMaskTextures() }
+    if not tex or not tex.RemoveMaskTexture then return end
+    local masks = SE:GetMaskTextures(tex)
     for _, mask in ipairs(masks) do
         tex:RemoveMaskTexture(mask)
         mask:Hide()
@@ -788,17 +788,19 @@ function PartyFrameSkin:Apply()
     end
 
     -- Hook CompactUnitFrame_SetUnit to catch newly assigned party/raid frames
-    hooksecurefunc("CompactUnitFrame_SetUnit", function(frame, unit)
-        if not frame or not frame.GetName then return end
-        local ok, name = pcall(frame.GetName, frame)
-        if not ok or not name then return end
-        if not name:find("^CompactPartyFrameMember") and not name:find("^CompactRaidFrame%d") then return end
+    if type(_G.CompactUnitFrame_SetUnit) == "function" then
+        hooksecurefunc("CompactUnitFrame_SetUnit", function(frame, unit)
+            if not frame or not frame.GetName then return end
+            local ok, name = pcall(frame.GetName, frame)
+            if not ok or not name then return end
+            if not name:find("^CompactPartyFrameMember") and not name:find("^CompactRaidFrame%d") then return end
 
-        if not skinnedFrames[frame] then
-            SkinMemberFrame(frame)
-        end
-        RefreshColors(frame)
-    end)
+            if not skinnedFrames[frame] then
+                SkinMemberFrame(frame)
+            end
+            RefreshColors(frame)
+        end)
+    end
 
     -- Event-driven discovery
     local eventFrame = CreateFrame("Frame")

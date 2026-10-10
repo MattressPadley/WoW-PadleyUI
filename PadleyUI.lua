@@ -1,5 +1,23 @@
 local addonName, ns = ...
 
+-- Forever: isolate each skin. One that errors on this second client is still
+-- reported through the normal error handler, but can no longer stop every skin
+-- after it in the list below from applying. Retail calls Apply directly.
+if ns.FLAVOR == "forever" then
+    for key, skin in pairs(ns) do
+        if type(key) == "string" and key:find("Skin$") and type(skin) == "table" then
+            for _, method in ipairs({ "Apply", "ApplyTokenFrame" }) do
+                local fn = skin[method]
+                if type(fn) == "function" then
+                    skin[method] = function(self)
+                        xpcall(function() fn(self) end, geterrorhandler())
+                    end
+                end
+            end
+        end
+    end
+end
+
 local frame = CreateFrame("Frame")
 frame:RegisterEvent("ADDON_LOADED")
 frame:SetScript("OnEvent", function(self, event, loadedAddon)

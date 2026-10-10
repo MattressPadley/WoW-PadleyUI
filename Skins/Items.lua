@@ -301,16 +301,23 @@ end
 ---------------------------------------------------------------------------
 
 function ItemSkin:Apply()
+    -- Presence-guarded: a client without EventUtil skips the deferred hooks.
+    local function OnAddOnLoaded(name, fn)
+        if EventUtil and EventUtil.ContinueOnAddOnLoaded then
+            EventUtil.ContinueOnAddOnLoaded(name, fn)
+        end
+    end
+
     -- Character panel: skin when it loads
     if PaperDollFrame then
         SkinCharacterSlots()
     end
-    EventUtil.ContinueOnAddOnLoaded("Blizzard_CharacterFrame", function()
+    OnAddOnLoaded("Blizzard_CharacterFrame", function()
         C_Timer.After(0, SkinCharacterSlots)
     end)
 
     -- Bank: deferred — hook OnShow
-    EventUtil.ContinueOnAddOnLoaded("Blizzard_AccountBank", function()
+    OnAddOnLoaded("Blizzard_AccountBank", function()
         if BankFrame then
             BankFrame:HookScript("OnShow", function()
                 C_Timer.After(0, function()
@@ -337,7 +344,7 @@ function ItemSkin:Apply()
             end
         end)
     end
-    EventUtil.ContinueOnAddOnLoaded("Blizzard_MerchantFrame", function()
+    OnAddOnLoaded("Blizzard_MerchantFrame", function()
         if MerchantFrame then
             MerchantFrame:HookScript("OnShow", function()
                 if not merchantSkinned then

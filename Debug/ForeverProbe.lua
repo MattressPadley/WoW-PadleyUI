@@ -8,7 +8,7 @@
 -- unit-frame lineage? nameplate structure? ObjectiveTracker kind? Secret
 -- Values era?).
 --
--- Loaded by PadleyUI_Forever.toc (Forever) AND, as a TEMP line, by
+-- Loaded by PadleyUI_Camelot.toc (Forever) AND, as a TEMP line, by
 -- PadleyUI.toc (retail) — the retail run is the baseline that separates
 -- "missing on both" (pre-existing defensive fallback) from "missing only on
 -- Forever" (real port work). Must not assume any Forever-only API.
