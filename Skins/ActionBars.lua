@@ -310,11 +310,18 @@ function PadleyUI_ToggleActionBarMouseover()
     SetMouseoverMode(mouseoverMode)
 end
 
+-- Deferred one frame so the collapse cascade doesn't run inside the keybind
+-- handler's call stack. UNVERIFIED: the callback is still our closure, so it
+-- may carry PadleyUI taint into the cascade regardless (seen as
+-- Blizzard_MawBuffs' GetAuraDataByIndex "secret while tainted" error).
+-- Drop the C_Timer wrapper if in-client testing shows it changes nothing.
 function PadleyUI_ToggleQuestTracker()
-    local tracker = ObjectiveTrackerFrame
-    if tracker and tracker.Header and tracker.Header.MinimizeButton then
-        tracker.Header.MinimizeButton:Click()
-    end
+    C_Timer.After(0, function()
+        local tracker = ObjectiveTrackerFrame
+        if tracker and tracker.Header and tracker.Header.MinimizeButton then
+            tracker.Header.MinimizeButton:Click()
+        end
+    end)
 end
 
 function ActionBarSkin:Apply()
